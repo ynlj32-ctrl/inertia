@@ -12,7 +12,7 @@ local lib = {
 
 	presets = {
 		def = {
-			accent = Color3.fromRGB(255, 0, 245);
+			accent = Color3.fromRGB(73, 113, 139);
 
 			bg = Color3.fromRGB(255, 255, 255);
 			fg = Color3.fromRGB(245, 245, 245);
@@ -29,6 +29,8 @@ local lib = {
 lib.theme = lib.presets.def
 local Client = game:GetService('Players').LocalPlayer;
 local Mouse = Client:GetMouse();
+local TweenService = game:GetService('TweenService')
+local UserInputService = game:GetService('UserInputService')
 
 lib.subelements.__index = lib.subelements;
 lib.elements.__index = lib.elements;
@@ -62,6 +64,41 @@ local function new(class: string, properties: {}?, attributes: {}?): Instance | 
 	end
 
 	return instance
+end
+
+local function resolveAsset(asset: string?)
+	if not asset or asset == '' then
+		return ''
+	end
+	if asset:match('^rbxasset') or asset:match('^http') then
+		return asset
+	end
+	if type(getcustomasset) == 'function' then
+		local success, contentId = pcall(getcustomasset, asset)
+		if success and type(contentId) == 'string' then
+			return contentId
+		end
+	end
+	warn(string.format("Unable to load custom asset '%s'. Put it in Potassium's workspace folder.", asset))
+	return ''
+end
+
+local function resolveBase64Asset(encoded: string?, filename: string)
+	if not encoded or encoded == '' or type(crypt) ~= 'table' or type(crypt.base64decode) ~= 'function' or type(writefile) ~= 'function' then
+		return ''
+	end
+	local payload = encoded:gsub('^data:image/[%w]+;base64,', '')
+	local success, bytes = pcall(crypt.base64decode, payload)
+	if not success or type(bytes) ~= 'string' then
+		warn('Unable to decode embedded logo data.')
+		return ''
+	end
+	local wrote = pcall(writefile, filename, bytes)
+	if not wrote then
+		warn(string.format("Unable to write embedded logo to '%s'.", filename))
+		return ''
+	end
+	return resolveAsset(filename)
 end
 
 function lib:overwrite(T1 : {}, T2 : {}) : {}
@@ -100,6 +137,240 @@ end
 
 lib.ui = new("ScreenGui", { Parent = game:GetService('RunService'):IsStudio() and Client.PlayerGui or game.CoreGui, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,})
 
+lib.overlays = {
+	watermark = nil;
+	notifications = nil;
+	keybinds = nil;
+	keybindItems = {};
+}
+lib.visible = true
+lib.overlayLinks = {}
+
+local function overlayLabel(parent, properties)
+	properties.Parent = parent
+	properties.FontFace = properties.FontFace or Font.new("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+	properties.TextColor3 = properties.TextColor3 or lib.theme.t2
+	properties.TextSize = properties.TextSize or 13
+	properties.BackgroundTransparency = properties.BackgroundTransparency or 1
+	return new("TextLabel", properties)
+end
+
+local function makeDraggable(frame)
+	local dragging = false
+	local dragStart
+	local startPosition
+	local moveConnection
+	local endConnection
+
+	local function stopDragging()
+		dragging = false
+	end
+
+	frame.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPosition = frame.Position
+		end
+	end)
+
+	moveConnection = UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local delta = input.Position - dragStart
+			frame.Position = UDim2.new(
+				startPosition.X.Scale,
+				startPosition.X.Offset + delta.X,
+				startPosition.Y.Scale,
+				startPosition.Y.Offset + delta.Y
+			)
+		end
+	end)
+
+	endConnection = UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			stopDragging()
+		end
+	end)
+
+	frame.Destroying:Connect(function()
+		if moveConnection then moveConnection:Disconnect() end
+		if endConnection then endConnection:Disconnect() end
+	end)
+end
+
+function lib:watermark(text: string?, position: UDim2?)
+	lib:closetasks(lib.overlayLinks)
+	lib.overlayLinks = {}
+	if lib.overlays.watermark then
+		lib.overlays.watermark:Destroy()
+	end
+
+	local frame = new("Frame", {
+		Parent = lib.ui;
+		Name = "Watermark";
+		BackgroundColor3 = Color3.fromRGB(18, 18, 18);
+		BorderSizePixel = 0;
+		Position = position or UDim2.fromOffset(12, 12);
+		Size = UDim2.fromOffset(286, 24);
+		Active = true;
+		ZIndex = 100;
+	})
+	makeDraggable(frame)
+	local watermarkScale = new("UIScale", {Parent = frame; Name = "AnimationScale"; Scale = 0.94;})
+	TweenService:Create(watermarkScale, TweenInfo.new(0.24, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Scale = 1}):Play()
+	new("UIStroke", {Parent = frame; Color = Color3.fromRGB(38, 38, 38); ApplyStrokeMode = Enum.ApplyStrokeMode.Border;})
+	local accent = new("Frame", {Parent = frame; BackgroundColor3 = lib.theme.accent; BorderSizePixel = 0; Size = UDim2.fromOffset(3, 24); ZIndex = 101;})
+	local status = overlayLabel(frame, {
+		Name = "Text";
+		Position = UDim2.fromOffset(10, 0);
+		Size = UDim2.new(1, -16, 1, 0);
+		Text = text or "discord.gg/robloxis";
+		TextColor3 = lib.theme.t;
+		TextXAlignment = Enum.TextXAlignment.Left;
+		ZIndex = 101;
+	})
+	lib.overlays.watermark = frame
+	local runService = game:GetService("RunService")
+	local stats = game:GetService("Stats")
+	local lastTime = os.clock()
+	local frames = 0
+	lib.overlayLinks[1] = runService.RenderStepped:Connect(function()
+		frames = frames + 1
+		local now = os.clock()
+		if now - lastTime >= 0.5 then
+			local fps = math.floor(frames / (now - lastTime) + 0.5)
+			frames = 0
+			lastTime = now
+			local ping = 0
+			pcall(function()
+				ping = math.floor(stats.Network.ServerStatsItem["Data Ping"]:GetValue() + 0.5)
+			end)
+			status.Text = string.format("%s  |  %d FPS  |  %d ms", text or "discord.gg/robloxis", fps, ping)
+		end
+		local pulse = (math.sin(now * 2.5) + 1) * 0.5
+		accent.BackgroundTransparency = 0.15 + pulse * 0.35
+		frame.BackgroundTransparency = 0.04 + pulse * 0.06
+	end)
+	return frame
+end
+
+function lib:setVisible(visible: boolean?)
+	lib.visible = visible == nil and not lib.visible or visible
+	for _, item in next, lib['BROWEN😂😂'] do
+		if item.i then
+			local scale = item.i:FindFirstChild("VisibilityScale") or new("UIScale", {Parent = item.i; Name = "VisibilityScale"; Scale = 1;})
+			if lib.visible then
+				item.i.Visible = true
+				scale.Scale = 0.96
+				TweenService:Create(scale, TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Scale = 1}):Play()
+			else
+				TweenService:Create(scale, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Scale = 0.96}):Play()
+				task.delay(0.16, function()
+					if not lib.visible and item.i then
+						item.i.Visible = false
+					end
+				end)
+			end
+		end
+	end
+	return lib.visible
+end
+
+function lib:notify(title: string, message: string?, duration: number?)
+	local holder = lib.overlays.notifications
+	if not holder then
+		holder = new("Frame", {
+			Parent = lib.ui;
+			Name = "Notifications";
+			AnchorPoint = Vector2.new(1, 0);
+			Position = UDim2.new(1, -14, 0, 14);
+			Size = UDim2.fromOffset(280, 0);
+			AutomaticSize = Enum.AutomaticSize.Y;
+			BackgroundTransparency = 1;
+			ZIndex = 110;
+		})
+		new("UIListLayout", {Parent = holder; Padding = UDim.new(0, 6); HorizontalAlignment = Enum.HorizontalAlignment.Right; SortOrder = Enum.SortOrder.LayoutOrder;})
+		lib.overlays.notifications = holder
+	end
+
+	local card = new("Frame", {
+		Parent = holder;
+		BackgroundColor3 = Color3.fromRGB(18, 18, 18);
+		BorderSizePixel = 0;
+		Size = UDim2.fromOffset(270, 48);
+		LayoutOrder = os.clock() * 1000;
+		ZIndex = 111;
+	})
+	local notificationScale = new("UIScale", {Parent = card; Name = "AnimationScale"; Scale = 0.9;})
+	TweenService:Create(notificationScale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
+	new("UIStroke", {Parent = card; Color = Color3.fromRGB(38, 38, 38); ApplyStrokeMode = Enum.ApplyStrokeMode.Border;})
+	new("Frame", {Parent = card; BackgroundColor3 = lib.theme.accent; BorderSizePixel = 0; Size = UDim2.fromOffset(3, 48); ZIndex = 112;})
+	overlayLabel(card, {Position = UDim2.fromOffset(11, 4); Size = UDim2.new(1, -18, 0, 17); Text = title; TextColor3 = lib.theme.t; TextXAlignment = Enum.TextXAlignment.Left; ZIndex = 112;})
+	overlayLabel(card, {Position = UDim2.fromOffset(11, 22); Size = UDim2.new(1, -18, 0, 18); Text = message or ''; TextSize = 12; TextXAlignment = Enum.TextXAlignment.Left; ZIndex = 112;})
+
+	task.delay(duration or 3, function()
+		if card.Parent then
+			card:Destroy()
+		end
+	end)
+	return card
+end
+
+function lib:keybindlist(enabled: boolean?, position: UDim2?)
+	if enabled == false then
+		if lib.overlays.keybinds then
+			lib.overlays.keybinds.Visible = false
+		end
+		return lib.overlays.keybinds
+	end
+	if lib.overlays.keybinds then
+		lib.overlays.keybinds.Visible = true
+		return lib.overlays.keybinds
+	end
+
+	local frame = new("Frame", {
+		Parent = lib.ui;
+		Name = "KeybindList";
+		BackgroundColor3 = Color3.fromRGB(18, 18, 18);
+		BorderSizePixel = 0;
+		Position = position or UDim2.fromOffset(12, 44);
+		Size = UDim2.fromOffset(190, 24);
+		AutomaticSize = Enum.AutomaticSize.Y;
+		Active = true;
+		ZIndex = 100;
+	})
+	makeDraggable(frame)
+	local keybindScale = new("UIScale", {Parent = frame; Name = "AnimationScale"; Scale = 0.96;})
+	TweenService:Create(keybindScale, TweenInfo.new(0.24, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Scale = 1}):Play()
+	new("UIStroke", {Parent = frame; Color = Color3.fromRGB(38, 38, 38); ApplyStrokeMode = Enum.ApplyStrokeMode.Border;})
+	new("UIPadding", {Parent = frame; PaddingBottom = UDim.new(0, 5); PaddingLeft = UDim.new(0, 8); PaddingRight = UDim.new(0, 8); PaddingTop = UDim.new(0, 5);})
+	new("UIListLayout", {Parent = frame; Padding = UDim.new(0, 3); SortOrder = Enum.SortOrder.LayoutOrder;})
+	local title = overlayLabel(frame, {Name = "Title"; LayoutOrder = -1000; Size = UDim2.new(1, 0, 0, 15); Text = "Keybinds"; TextColor3 = lib.theme.t; TextXAlignment = Enum.TextXAlignment.Left; ZIndex = 101;})
+	new("Frame", {Parent = frame; Name = "Accent"; BackgroundColor3 = lib.theme.accent; BorderSizePixel = 0; LayoutOrder = -999; Size = UDim2.new(1, 0, 0, 1); ZIndex = 101;})
+	lib.overlays.keybinds = frame
+	return frame
+end
+
+function lib:_registerKeybind(data, label, defaultKey)
+	lib:keybindlist(true)
+	local item = overlayLabel(lib.overlays.keybinds, {
+		Name = "Keybind";
+		LayoutOrder = #lib.overlays.keybindItems + 1;
+		Size = UDim2.new(1, 0, 0, 16);
+		Text = string.format("%s  [%s]", label, tostring(defaultKey or data.val or '?'));
+		TextXAlignment = Enum.TextXAlignment.Left;
+		ZIndex = 101;
+	})
+	table.insert(lib.overlays.keybindItems, {data = data; item = item; label = label;})
+	local function refresh()
+		item.Text = string.format("%s  [%s]", label, tostring(data.val or '?'))
+		item.TextColor3 = data.active and lib.theme.accent or lib.theme.t2
+	end
+	data._refreshKeybind = refresh
+	refresh()
+	return item
+end
+
 function lib.elements:butt(...)
 	local Element = lib:overwrite({
 		text = 'Text';
@@ -127,7 +398,7 @@ function lib.elements:baee(...)
 	local top = new("Frame", { Parent = base; Name = "top"; BackgroundColor3 = Color3.fromRGB(255, 255, 255); BackgroundTransparency = 1; BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; LayoutOrder = -1; Size = UDim2.new(1, 0, 0, 8); }) :: Frame 
 	local LeftC = new("Frame", { Parent = top; Name = "LeftC"; BackgroundColor3 = Color3.fromRGB(255, 255, 255); BackgroundTransparency = 1; BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Position = UDim2.fromOffset(-16, 0); Size = UDim2.new(0, 20, 1, 0); }) :: Frame 
 	local label = new("TextLabel", { Parent = LeftC; Name = "label"; AutomaticSize =Enum.AutomaticSize.X; BackgroundColor3 = Color3.fromRGB(255, 255, 255); BackgroundTransparency = 1; BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal); Size = UDim2.fromScale(0, 1); Text = BRUUUUUUUUUUUUUUUUUUUUUUUUUULOLOLOLOKLOLOKLOOKOKOLJKASDLJKNASJKCNXILJNI.text; TextColor3 = Color3.fromRGB(200, 200, 200); TextSize = 14; }) :: TextLabel 
-	local RightC = new("Frame", { Parent = top; Name = "RightC"; AnchorPoint = Vector2.new(1, 0); BackgroundColor3 = Color3.fromRGB(18, 18, 18); BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Position = UDim2.new(1, 22, 0, 0); Size = UDim2.fromScale(0, 1); }) :: Frame 
+	local RightC = new("Frame", { Parent = top; Name = "RightC"; AnchorPoint = Vector2.new(1, 0); BackgroundColor3 = Color3.fromRGB(18, 18, 18); BackgroundTransparency = 1; BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Position = UDim2.new(1, 0, 0, 0); Size = UDim2.fromScale(0, 1); }) :: Frame 
 	new("UIListLayout", { Parent = LeftC; FillDirection =Enum.FillDirection.Horizontal; Padding =UDim.new(0, 6); SortOrder = Enum.SortOrder.LayoutOrder; }) 
 	new("UIPadding", { Parent = label; PaddingBottom =UDim.new(0, 2); }) 
 	new("UIListLayout", { Parent = RightC; FillDirection =Enum.FillDirection.Horizontal; HorizontalAlignment = Enum.HorizontalAlignment.Right; Padding =UDim.new(0, 24); SortOrder = Enum.SortOrder.LayoutOrder; }) 
@@ -223,6 +494,9 @@ function lib.subelements:addkiki(...)
 		if eeeee == nil then
 			ButtonLabel.Text = '?'
 			ElementData.val = nil
+			if ElementData._refreshKeybind then
+				ElementData._refreshKeybind()
+			end
 			return
 		end
 
@@ -231,11 +505,17 @@ function lib.subelements:addkiki(...)
 		if table.find(Blacklist, stripped) then
 			ButtonLabel.Text = '?'
 			ElementData.val = nil
+			if ElementData._refreshKeybind then
+				ElementData._refreshKeybind()
+			end
 			return
 		end
 
 		ButtonLabel.Text = gsub(eeeee)
 		ElementData.val = gsub(eeeee) 
+		if ElementData._refreshKeybind then
+			ElementData._refreshKeybind()
+		end
 	end
 
 	ElementButton.Activated:Connect(function()
@@ -258,6 +538,7 @@ function lib.subelements:addkiki(...)
 			if ElementData.mode == 'Hold' then
 				ElementData.pressed = true
 				ElementData.active = true
+				if ElementData._refreshKeybind then ElementData._refreshKeybind() end
 
 				while ElementData.pressed do task.wait()
 					local _, CallFailure = pcall(function()
@@ -269,15 +550,14 @@ function lib.subelements:addkiki(...)
 			elseif ElementData.mode == 'Toggle' then
 				ElementData.pressed = not ElementData.pressed
 				ElementData.active = ElementData.pressed
-				while ElementData.pressed do task.wait()
-					local _, CallFailure = pcall(function()
-						ElementData.call(ElementData.val)
-					end)
-
-					if CallFailure then warn(CallFailure) end
-				end
+				if ElementData._refreshKeybind then ElementData._refreshKeybind() end
+				local _, CallFailure = pcall(function()
+					ElementData.call(ElementData.val, ElementData.pressed)
+				end)
+				if CallFailure then warn(CallFailure) end
 			elseif ElementData.mode == 'Click' then
 				ElementData.active = true
+				if ElementData._refreshKeybind then ElementData._refreshKeybind() end
 				local _, CallFailure = pcall(function()
 					ElementData.call(ElementData.val)
 				end)
@@ -292,15 +572,18 @@ function lib.subelements:addkiki(...)
 			if (gsub(Input.KeyCode) == ElementData.val or gsub(Input.UserInputType) == ElementData.val) and ElementData.mode == 'Hold' then
 				ElementData.pressed = false
 				ElementData.active = false
+				if ElementData._refreshKeybind then ElementData._refreshKeybind() end
 			end
 
 			if (gsub(Input.KeyCode) == ElementData.val or gsub(Input.UserInputType) == ElementData.val) and ElementData.mode == 'Click' then
 				ElementData.active = false
+				if ElementData._refreshKeybind then ElementData._refreshKeybind() end
 			end
 		end
 	end)
 
 	ElementData:Set(ElementData.val)
+	lib:_registerKeybind(ElementData, ElementData.text, ElementData.val)
 end
 
 function lib.subelements:addtscolor(...)
@@ -317,7 +600,7 @@ function lib.subelements:addtscolor(...)
 		call = function() end;
 	}, ... or {})
 
-	local ElementButton = new("TextButton", { Parent = self.c2, BackgroundColor3 = Color3.fromRGB(255, 0, 245), BorderColor3 = Color3.fromRGB(0, 0, 0), BorderSizePixel = 0, FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal), Size = UDim2.new(0, 19, 1, 0), Text = "", TextColor3 = Color3.fromRGB(255, 255, 255), TextSize = 14, TextTransparency = 1, }) :: TextButton 
+	local ElementButton = new("TextButton", { Parent = self.c2, BackgroundColor3 = lib.theme.accent, BorderColor3 = Color3.fromRGB(0, 0, 0), BorderSizePixel = 0, FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal), Size = UDim2.new(0, 19, 1, 0), Text = "", TextColor3 = Color3.fromRGB(255, 255, 255), TextSize = 14, TextTransparency = 1, }) :: TextButton
 	new("UIStroke", { Parent = ElementButton, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, }) 
 	new("UIPadding", { Parent = ElementButton, PaddingLeft = UDim.new(0, 5), PaddingRight = UDim.new(0, 5), }) 
 	new("UIGradient", { Parent = ElementButton, Color = ColorSequence.new{ ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)), ColorSequenceKeypoint.new(1, Color3.fromRGB(152, 152, 152)) }, Rotation = 90, }) 
@@ -687,12 +970,20 @@ function lib.elements:newslider(...)
 	local base = self:baee(...)
 
 	local hitbox = new("TextButton", { Parent = base.c3; Name = "Sliderbutton"; TextTransparency = 1; AutoButtonColor = false; BackgroundColor3 = Color3.fromRGB(18, 18, 18); BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal); Size = UDim2.new(1, 0, 0, 6); TextColor3 = Color3.fromRGB(0, 0, 0); TextSize = 14; }) :: TextButton 
-	local fill = new("Frame", { Parent = hitbox; Name = "Fill"; BackgroundColor3 = Color3.fromRGB(255, 0, 245); BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Size = UDim2.fromScale(0.5, 1); }) 
+	local fill = new("Frame", { Parent = hitbox; Name = "Fill"; BackgroundColor3 = lib.theme.accent; BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Size = UDim2.fromScale(0.5, 1); }) 
 	new("UIStroke", { Parent = hitbox; ApplyStrokeMode = Enum.ApplyStrokeMode.Border }) 
+	local val = new("TextLabel", { Parent = base.c2; Name = "Value"; BackgroundTransparency = 1; FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal); Size = UDim2.fromOffset(44, 8); Text = ""; TextColor3 = lib.theme.t2; TextSize = 11; TextTruncate = Enum.TextTruncate.AtEnd; TextXAlignment = Enum.TextXAlignment.Right; TextYAlignment = Enum.TextYAlignment.Center; LayoutOrder = 1; }) :: TextLabel
 
 	local mouse = game.Players.LocalPlayer:GetMouse();
 	local down = nil;
-	local val = nil;
+
+	local function formatValue(value)
+		local rounded = math.floor(value * 100 + 0.5) / 100
+		if rounded == math.floor(rounded) then
+			return tostring(math.floor(rounded))
+		end
+		return string.format("%.2f", rounded):gsub("0+$", ""):gsub("%.$", "")
+	end
 
 	local function ie(Input : InputObject, GPE)
 		if Input.UserInputState == Enum.UserInputState.End then
@@ -716,7 +1007,7 @@ function lib.elements:newslider(...)
 	function data:set(v)
 		data.val = v;
 
-		if val then val.Text = `{data.prefix}{data.val}{data.suffix}` end
+		val.Text = `{data.prefix}{formatValue(data.val)}{data.suffix}`
 
 		fill.Size = UDim2.fromScale(
 			data.axis == 'x' and ((data.val - data.min) / (data.max - data.min)) or 1,
@@ -728,6 +1019,7 @@ function lib.elements:newslider(...)
 	game:GetService('UserInputService').InputBegan:Connect(ie);
 	game:GetService('UserInputService').InputEnded:Connect(ie);
 	game:GetService('UserInputService').InputChanged:Connect(ie);
+	data:set(data.val)
 
 	return data
 end
@@ -846,22 +1138,34 @@ function lib:win(name, ...)
 		anchor = Vector2.new(.5, .5);
 		title = '';
 		logo = '';
+		logoBase64 = '';
+		logoFile = 'ui-logo.jpg';
+		fallbackLogo = '';
 		tabs = {};
 		links = {};
 		active = true;
 	}, ... or {})
 
+	local localLogo = resolveAsset(window.logo)
+	if localLogo == '' then
+		localLogo = resolveBase64Asset(window.logoBase64, window.logoFile)
+	end
+	window.logo = localLogo ~= '' and localLogo or window.fallbackLogo
 	local windowframe = new("Frame", { Parent = lib.ui; Draggable = true; Selectable = true; Active = true; Name = "WindowFrame"; BackgroundColor3 = Color3.fromRGB(13, 13, 13); BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Position = UDim2.fromScale(0.33789411187171936, 0.28999999165534973); Size = UDim2.fromOffset(621, 400); }) :: Frame 
 	local topbar = new("Frame", { Parent = windowframe; Name = "Topbar"; BackgroundColor3 = Color3.fromRGB(255, 255, 255); BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Position = UDim2.fromOffset(-10, 0); Size = UDim2.new(1, 20, 0, 30); }) :: Frame 
 	local titlelabel = new("TextLabel", { Parent = topbar; Name = "TitleLabel"; BackgroundColor3 = Color3.fromRGB(255, 255, 255); BackgroundTransparency = 1; BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal); Size = UDim2.fromScale(1, 1); Text = window.title; TextColor3 = Color3.fromRGB(255, 255, 255); TextSize = 14; TextXAlignment = Enum.TextXAlignment.Left; }) :: TextLabel 
 	local content = new("Frame", { Parent = windowframe; Name = "Content"; AnchorPoint = Vector2.new(0, 1); BackgroundColor3 = Color3.fromRGB(18, 18, 18); BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Position = UDim2.fromScale(0, 1); Size = UDim2.new(1, 0, 1, -30); }) :: Frame 
 	local sidebar = new("Frame", { Parent = content; Name = "Sidebar"; BackgroundColor3 = Color3.fromRGB(255, 255, 255); BackgroundTransparency = 1; BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Size = UDim2.new(0, 130, 1, 0); }) :: Frame 
 	local logomask = new("Frame", { Parent = sidebar; Name = "LogoMask"; BackgroundColor3 = Color3.fromRGB(255, 255, 255); BackgroundTransparency = 1; BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; ClipsDescendants = true; Size = UDim2.new(1, 0, 0, 80); }) :: Frame 
-	local logolabel = new("ImageLabel", { Parent = logomask; Name = "LogoLabel"; AnchorPoint = Vector2.new(0.5, 0.5); BackgroundColor3 = Color3.fromRGB(255, 255, 255); BackgroundTransparency = 1; BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Image = window.logo; Position = UDim2.fromScale(0.5, 0.5); Size = UDim2.fromScale(1.5, 1.5); }) :: ImageLabel 
-	local tabbuttons = new("Frame", { Parent = sidebar; Name = "TabButtons"; AnchorPoint = Vector2.new(0, 1); BackgroundColor3 = Color3.fromRGB(255, 255, 255); BackgroundTransparency = 1; BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Position = UDim2.fromScale(0, 1); Size = UDim2.new(1, 0, 1, -86); }) :: Frame 
+	local logolabel = new("ImageLabel", { Parent = logomask; Name = "LogoLabel"; AnchorPoint = Vector2.new(0.5, 0.5); BackgroundColor3 = Color3.fromRGB(255, 255, 255); BackgroundTransparency = 1; BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Image = window.logo; ImageColor3 = Color3.fromRGB(255, 255, 255); ImageTransparency = window.logo == '' and 1 or 0; Position = UDim2.fromScale(0.5, 0.5); Size = UDim2.fromScale(1.5, 1.5); ScaleType = Enum.ScaleType.Fit; }) :: ImageLabel 
+	local logoFallback = new("TextLabel", { Parent = logomask; AnchorPoint = Vector2.new(0.5, 0.5); BackgroundTransparency = 1; Font = Enum.Font.GothamBold; Position = UDim2.fromScale(0.5, 0.5); Size = UDim2.fromOffset(60, 68); Text = ""; TextColor3 = Color3.fromRGB(245, 245, 245); TextSize = 72; TextTransparency = 1; ZIndex = 2; }) :: TextLabel
+	local tabbuttons = new("Frame", { Parent = sidebar; Name = "TabButtons"; AnchorPoint = Vector2.new(0, 0); BackgroundColor3 = Color3.fromRGB(255, 255, 255); BackgroundTransparency = 1; BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Position = UDim2.fromOffset(0, 0); Size = UDim2.new(1, 0, 1, 0); }) :: Frame 
 	local tabcontainer = new("Frame", { Parent = content; Name = "TabContainer"; AnchorPoint = Vector2.new(1, 0); BackgroundColor3 = Color3.fromRGB(18, 18, 18); BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Position = UDim2.fromScale(1, 0); Size = UDim2.new(1, -136, 1, 0); }) :: Frame 
 	new("UIGradient", { Parent = topbar; Color =ColorSequence.new{ ColorSequenceKeypoint.new(0, Color3.fromRGB(26, 26, 26)), ColorSequenceKeypoint.new(1, Color3.fromRGB(13, 13, 13)) }; Rotation = 90; }) 
 	new("UIPadding", { Parent = titlelabel; PaddingLeft =UDim.new(0, 10); }) 
+	titlelabel.TextColor3 = lib.theme.accent
+	local titleBreath = TweenService:Create(titlelabel, TweenInfo.new(1.35, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {TextTransparency = 0.28})
+	titleBreath:Play()
 	new("UIStroke", { Parent = windowframe; BorderStrokePosition = Enum.BorderStrokePosition.Inner; }) 
 	new("UIStroke", { Parent = content; }) 
 	new("UIAspectRatioConstraint", { Parent = logolabel; }) 
@@ -874,10 +1178,11 @@ function lib:win(name, ...)
 	function window:toggle(b : boolean)
 		if (b == nil or typeof(b) ~= 'boolean') then b = not window.active end;
 		window.active = b;
-		windowframe.Visible = window.active;
+		lib:setVisible(window.active)
 	end
 
 	function window:exit()
+		titleBreath:Cancel()
 		window.frame:Destroy();
 		lib:closetasks(window.links);
 	end
@@ -888,8 +1193,16 @@ function lib:win(name, ...)
 		windowframe.Size = window.size;
 		windowframe.Position = window.position;
 		windowframe.AnchorPoint = window.anchor;
+		local localLogo = resolveAsset(window.logo)
+		if localLogo == '' then
+			localLogo = resolveBase64Asset(window.logoBase64, window.logoFile)
+		end
+		window.logo = localLogo ~= '' and localLogo or window.fallbackLogo
 		logolabel.Image = window.logo;
+		logolabel.ImageTransparency = window.logo == '' and 1 or 0;
+		logoFallback.TextTransparency = window.logo == '' and 0 or 1;
 		titlelabel.Text = window.title;
+		titlelabel.TextColor3 = lib.theme.accent;
 	end
 
 	function window:tab(name, ...)
@@ -911,7 +1224,7 @@ function lib:win(name, ...)
 
 
 		local tabbutton = new("TextButton", { Parent = tabbuttons; Name = "tabbutton"; AutoButtonColor = false; BackgroundColor3 = Color3.fromRGB(15, 15, 15); BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal); Size = UDim2.new(1, 0, 0, 30); Text = tab.name; TextColor3 = Color3.fromRGB(255, 255, 255); TextSize = 14; TextXAlignment = Enum.TextXAlignment.Left; }) :: TextButton 
-		local accent = new("Frame", { Parent = tabbutton; Name = "accent"; AnchorPoint = Vector2.new(0, 0.5); BackgroundColor3 = Color3.fromRGB(255, 0, 245); BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Position = UDim2.new(0, -9, 0.5, 0); Size = UDim2.new(0, 2, 1, -2); Visible = false; }) 
+		local accent = new("Frame", { Parent = tabbutton; Name = "accent"; AnchorPoint = Vector2.new(0, 0.5); BackgroundColor3 = lib.theme.accent; BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Position = UDim2.new(0, -9, 0.5, 0); Size = UDim2.new(0, 2, 1, -2); Visible = false; }) 
 		new("UIStroke", { Parent = tabbutton; ApplyStrokeMode = Enum.ApplyStrokeMode.Border; BorderStrokePosition = Enum.BorderStrokePosition.Inner; }) 
 		new("UIPadding", { Parent = tabbutton; PaddingLeft =UDim.new(0, 10); }) 
 
@@ -988,6 +1301,76 @@ function lib:win(name, ...)
 	window.i = windowframe
 	table.insert(lib['BROWEN😂😂'], window)
 	return window
+end
+
+lib:watermark("discord.gg/robloxis")
+lib:keybindlist(true)
+
+-- Set this to false when using the module without the demo window.
+local RUN_EXAMPLE = false
+
+if RUN_EXAMPLE then
+	local example = lib:win("Example", {
+		title = "Linoria-style Example";
+		logo = "";
+		logoBase64 = "";
+		fallbackLogo = "";
+		size = UDim2.fromOffset(620, 400);
+		position = UDim2.fromScale(0.5, 0.5);
+	})
+
+	local combat = example:tab("Combat")
+	local general = combat:group("General", {side = "left";})
+	local extras = combat:group("Extras", {side = "right";})
+
+	general:newtoggle({
+		text = "Enable Feature";
+		val = true;
+		call = function(value)
+			lib:notify("Feature", value and "Enabled" or "Disabled")
+		end;
+	})
+
+	general:newslider({
+		text = "Volume";
+		min = 0;
+		max = 100;
+		val = 50;
+		prefix = "";
+		suffix = "%";
+		call = function(value)
+			print("Volume:", value)
+		end;
+	})
+
+	general:newkeybind({
+		text = "Toggle UI";
+		val = "RightShift";
+		mode = "Toggle";
+		call = function()
+			lib:setVisible(not lib.visible)
+		end;
+	})
+
+	extras:newdropdown({
+		text = "Preset";
+		list = {"Default", "Performance", "Visuals"};
+		multi = false;
+		val = {"Default"};
+		call = function(value)
+			lib:notify("Preset", table.concat(value, ", "))
+		end;
+	})
+
+	extras:newcolor({
+		text = "Accent Color";
+		val = lib.theme.accent;
+		call = function(value)
+			lib.theme.accent = value
+		end;
+	})
+
+	lib:notify("Loaded", "Example interface ready")
 end
 
 return lib
