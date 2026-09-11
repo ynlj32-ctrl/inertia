@@ -547,7 +547,7 @@ function lib.subelements:addtog(...)
 
 	local doomdtwlololololololo = new("TextButton", { Parent = self.c1; Name = "doomdtwlololololololo"; LayoutOrder = -999; AutoButtonColor = false; BackgroundColor3 = Color3.fromRGB(18, 18, 18); BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal); Size = UDim2.fromScale(1, 1); Text = ""; TextColor3 = Color3.fromRGB(0, 0, 0); TextSize = 14; }) :: TextButton 
 	new("UIAspectRatioConstraint", { Parent = doomdtwlololololololo; }) 
-	new("UIStroke", { Parent = doomdtwlololololololo; ApplyStrokeMode = Enum.ApplyStrokeMode.Border; }) 
+	local toggleStroke = new("UIStroke", { Parent = doomdtwlololololololo; ApplyStrokeMode = Enum.ApplyStrokeMode.Border; Color = Color3.fromRGB(60, 60, 60); }) 
 
 	function ElementData:Set(Value : boolean)
 		if ElementData.Children then
@@ -555,6 +555,7 @@ function lib.subelements:addtog(...)
 		end
 
 		doomdtwlololololololo.BackgroundColor3 = Value and (lib.theme.accent) or (Color3.fromRGB(18,18,18))
+		toggleStroke.Color = Value and Color3.fromRGB(0, 0, 0) or Color3.fromRGB(60, 60, 60)
 		ElementData.val = Value;
 		lib:setFlag(getFlagName(ElementData), Value)
 		if not lib.loadingConfig then ElementData.call(Value) end
@@ -1419,7 +1420,7 @@ function lib:win(name, ...)
 
 	local settingsTab = window:tab("Settings")
 	local settingsGroup = settingsTab:group("Configuration", {side = "left"})
-	local configName = new("TextBox", {Parent = settingsGroup.doomdtw_is_so_cute; BackgroundColor3 = Color3.fromRGB(18, 18, 18); BorderColor3 = Color3.fromRGB(28, 28, 28); ClearTextOnFocus = false; Font = Enum.Font.Code; PlaceholderText = "Config name"; Size = UDim2.new(1, 0, 0, 22); Text = window.title ~= '' and window.title or "Inertia"; TextColor3 = lib.theme.t2; TextSize = 13;})
+	local configName = new("TextBox", {Parent = settingsGroup.doomdtw_is_so_cute; BackgroundColor3 = Color3.fromRGB(18, 18, 18); BorderColor3 = Color3.fromRGB(28, 28, 28); ClearTextOnFocus = false; Font = Enum.Font.Code; PlaceholderText = "Config name"; Size = UDim2.new(1, 0, 0, 22); Text = "Config Name"; TextColor3 = lib.theme.t2; TextSize = 13;})
 	local configList = new("TextLabel", {Parent = settingsGroup.doomdtw_is_so_cute; BackgroundTransparency = 1; Font = Enum.Font.Code; Size = UDim2.new(1, 0, 0, 30); Text = "Saved: none"; TextColor3 = lib.theme.t2; TextSize = 11; TextWrapped = true; TextXAlignment = Enum.TextXAlignment.Left;})
 	local autoLoadLabel = new("TextLabel", {Parent = settingsGroup.doomdtw_is_so_cute; BackgroundTransparency = 1; Font = Enum.Font.Code; Size = UDim2.new(1, 0, 0, 18); Text = "Auto Load: none"; TextColor3 = lib.theme.t2; TextSize = 11; TextXAlignment = Enum.TextXAlignment.Left;})
 	local function refreshConfigList()
