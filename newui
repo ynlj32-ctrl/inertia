@@ -1151,6 +1151,7 @@ function lib:win(name, ...)
 		localLogo = resolveBase64Asset(window.logoBase64, window.logoFile)
 	end
 	window.logo = localLogo ~= '' and localLogo or window.fallbackLogo
+	lib:watermark(window.title ~= '' and window.title or "Inertia")
 	local windowframe = new("Frame", { Parent = lib.ui; Draggable = true; Selectable = true; Active = true; Name = "WindowFrame"; BackgroundColor3 = Color3.fromRGB(13, 13, 13); BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Position = UDim2.fromScale(0.33789411187171936, 0.28999999165534973); Size = UDim2.fromOffset(621, 400); }) :: Frame 
 	local topbar = new("Frame", { Parent = windowframe; Name = "Topbar"; BackgroundColor3 = Color3.fromRGB(255, 255, 255); BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Position = UDim2.fromOffset(-10, 0); Size = UDim2.new(1, 20, 0, 30); }) :: Frame 
 	local titlelabel = new("TextLabel", { Parent = topbar; Name = "TitleLabel"; BackgroundColor3 = Color3.fromRGB(255, 255, 255); BackgroundTransparency = 1; BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal); Size = UDim2.fromScale(1, 1); Text = window.title; TextColor3 = Color3.fromRGB(255, 255, 255); TextSize = 14; TextXAlignment = Enum.TextXAlignment.Left; }) :: TextLabel 
@@ -1307,7 +1308,7 @@ lib:watermark("Inertia")
 lib:keybindlist(true)
 
 -- Set this to false when using the module without the demo window.
-local RUN_EXAMPLE = false
+local RUN_EXAMPLE = true
 
 if RUN_EXAMPLE then
 	local example = lib:win("Example", {
