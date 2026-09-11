@@ -8,6 +8,10 @@ local lib = {
 	methods = {};
 	elements = {};
 	subelements = {};
+	flags = {};
+	defaults = {};
+	flagControls = {};
+	loadingConfig = false;
 	['BROWEN😂😂'] = {};
 
 	presets = {
@@ -31,6 +35,7 @@ local Client = game:GetService('Players').LocalPlayer;
 local Mouse = Client:GetMouse();
 local TweenService = game:GetService('TweenService')
 local UserInputService = game:GetService('UserInputService')
+local HttpService = game:GetService('HttpService')
 
 lib.subelements.__index = lib.subelements;
 lib.elements.__index = lib.elements;
@@ -133,6 +138,116 @@ function lib:validinput(i)
 		Enum.UserInputType.MouseButton1;
 		Enum.UserInputType.Touch;
 	}, i.UserInputType)
+end
+
+function lib:setFlag(flag: string?, value: any)
+	if flag and flag ~= '' then
+		self.flags[flag] = value
+	end
+	return value
+end
+
+function lib:getFlag(flag: string)
+	return self.flags[flag]
+end
+
+local function serializeValue(value)
+	if typeof(value) == 'Color3' then
+		return {__type = 'Color3'; r = value.R; g = value.G; b = value.B;}
+	end
+	if type(value) == 'table' then
+		local result = {}
+		for key, child in pairs(value) do
+			result[key] = serializeValue(child)
+		end
+		return result
+	end
+	return value
+end
+
+local function deserializeValue(value)
+	if type(value) == 'table' and value.__type == 'Color3' then
+		return Color3.new(value.r, value.g, value.b)
+	end
+	if type(value) == 'table' then
+		local result = {}
+		for key, child in pairs(value) do
+			result[key] = deserializeValue(child)
+		end
+		return result
+	end
+	return value
+end
+
+function lib:saveConfig(name: string?)
+	if type(writefile) ~= 'function' then return false end
+	local configName = tostring(name or 'Inertia'):gsub('[^%w%-%_ ]', '')
+	if configName == '' then configName = 'Inertia' end
+	if type(makefolder) == 'function' then pcall(makefolder, 'Inertia') end
+	local success = pcall(writefile, 'Inertia/' .. configName .. '.json', HttpService:JSONEncode(serializeValue(self.flags)))
+	return success
+end
+
+function lib:listConfigs()
+	if type(listfiles) ~= 'function' then return {} end
+	if type(makefolder) == 'function' then pcall(makefolder, 'Inertia') end
+	local configs = {}
+	for _, path in ipairs(listfiles('Inertia')) do
+		local name = tostring(path):match('([^/\\]+)%.json$')
+		if name then table.insert(configs, name) end
+	end
+	table.sort(configs)
+	return configs
+end
+
+function lib:loadConfig(name: string?)
+	local configName = tostring(name or 'Inertia'):gsub('[^%w%-%_ ]', '')
+	if configName == '' then configName = 'Inertia' end
+	local filename = 'Inertia/' .. configName .. '.json'
+	if type(readfile) ~= 'function' or (type(isfile) == 'function' and not isfile(filename)) then return false end
+	local success, data = pcall(function() return HttpService:JSONDecode(readfile(filename)) end)
+	if not success or type(data) ~= 'table' then return false end
+	self.loadingConfig = true
+	for flag, value in pairs(data) do
+		local decoded = deserializeValue(value)
+		self:setFlag(flag, decoded)
+		if self.flagControls[flag] then self.flagControls[flag](decoded) end
+	end
+	self.loadingConfig = false
+	return true
+end
+
+function lib:resetConfig()
+	for flag, value in pairs(self.defaults) do
+		self:setFlag(flag, value)
+		if self.flagControls[flag] then self.flagControls[flag](value) end
+	end
+end
+
+function lib:setAutoLoadConfig(name: string)
+	local configName = tostring(name or ''):gsub('[^%w%-%_ ]', '')
+	if configName == '' or type(writefile) ~= 'function' then return false end
+	if type(makefolder) == 'function' then pcall(makefolder, 'Inertia') end
+	return pcall(writefile, 'Inertia/autoload.txt', configName)
+end
+
+function lib:getAutoLoadConfig()
+	if type(readfile) ~= 'function' or (type(isfile) == 'function' and not isfile('Inertia/autoload.txt')) then return nil end
+	local success, name = pcall(readfile, 'Inertia/autoload.txt')
+	return success and name ~= '' and name or nil
+end
+
+local function getFlagName(data)
+	return data.flag or data.text
+end
+
+local function registerFlag(data, setter)
+	local flag = getFlagName(data)
+	if flag then
+		lib.defaults[flag] = data.val
+		lib.flagControls[flag] = setter
+		lib:setFlag(flag, data.val)
+	end
 end
 
 lib.ui = new("ScreenGui", { Parent = game:GetService('RunService'):IsStudio() and Client.PlayerGui or game.CoreGui, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,})
@@ -419,6 +534,7 @@ end
 function lib.subelements:addtog(...)
 	local ElementData = lib:overwrite({
 		text = 'Toggle';
+		flag = nil;
 		val = false;
 		call = function()
 		end,
@@ -440,7 +556,8 @@ function lib.subelements:addtog(...)
 
 		doomdtwlololololololo.BackgroundColor3 = Value and (lib.theme.accent) or (Color3.fromRGB(18,18,18))
 		ElementData.val = Value;
-		ElementData.call(Value);
+		lib:setFlag(getFlagName(ElementData), Value)
+		if not lib.loadingConfig then ElementData.call(Value) end
 	end
 
 	doomdtwlololololololo.Activated:Connect(function()
@@ -448,6 +565,8 @@ function lib.subelements:addtog(...)
 	end)
 
 	ElementData:Set(ElementData.val);
+	lib:setFlag(getFlagName(ElementData), ElementData.val)
+	registerFlag(ElementData, function(value) ElementData:Set(value) end)
 
 	setmetatable(ElementData, lib.SubElements);
 	return ElementData
@@ -457,6 +576,7 @@ function lib.subelements:addkiki(...)
 	-- BOIIIIIII KIKI DO U LOVE MEEEEEEEEEE😂😂😂😂😂😂😂😂😂🧅🧅
 	local ElementData = lib:overwrite({
 		text = 'browne';
+		flag = nil;
 		mode = "Click";
 		val = nil;
 
@@ -494,6 +614,7 @@ function lib.subelements:addkiki(...)
 		if eeeee == nil then
 			ButtonLabel.Text = '?'
 			ElementData.val = nil
+			lib:setFlag(getFlagName(ElementData), nil)
 			if ElementData._refreshKeybind then
 				ElementData._refreshKeybind()
 			end
@@ -505,6 +626,7 @@ function lib.subelements:addkiki(...)
 		if table.find(Blacklist, stripped) then
 			ButtonLabel.Text = '?'
 			ElementData.val = nil
+			lib:setFlag(getFlagName(ElementData), nil)
 			if ElementData._refreshKeybind then
 				ElementData._refreshKeybind()
 			end
@@ -513,6 +635,7 @@ function lib.subelements:addkiki(...)
 
 		ButtonLabel.Text = gsub(eeeee)
 		ElementData.val = gsub(eeeee) 
+		lib:setFlag(getFlagName(ElementData), ElementData.val)
 		if ElementData._refreshKeybind then
 			ElementData._refreshKeybind()
 		end
@@ -584,6 +707,7 @@ function lib.subelements:addkiki(...)
 
 	ElementData:Set(ElementData.val)
 	lib:_registerKeybind(ElementData, ElementData.text, ElementData.val)
+	registerFlag(ElementData, function(value) ElementData:Set(value) end)
 end
 
 function lib.subelements:addtscolor(...)
@@ -595,6 +719,7 @@ function lib.subelements:addtscolor(...)
 		Colors = {};
 
 		text = 'Color Picker';
+		flag = nil;
 		val = Color3.fromRGB(255, 255, 255);
 		alpha = 1;
 		call = function() end;
@@ -638,14 +763,12 @@ function lib.subelements:addtscolor(...)
 	ColorPickerFrame.MouseEnter:Connect(function()
 		for _, w in next, lib['BROWEN😂😂'] do
 			w.i.Draggable = false;
-			print(w.Name)
 		end
 	end)
 
 	ColorPickerFrame.MouseLeave:Connect(function()
 		for _, w in next, lib['BROWEN😂😂'] do
 			w.i.Draggable = true;
-			print('made undrag')
 		end
 	end)
 
@@ -750,6 +873,7 @@ function lib.subelements:addtscolor(...)
 
 		ElementData.val = HSV or ElementData.val
 		ElementData.alpha = Alpha or ElementData.alpha
+		lib:setFlag(getFlagName(ElementData), {value = ElementData.val; alpha = ElementData.alpha;})
 
 		AlphaBarValue = (AlphaMarker.Position.X.Scale);
 		HueBarValue = HueMarker.Position.Y.Scale;
@@ -776,7 +900,7 @@ function lib.subelements:addtscolor(...)
 			[3] = HSV.B;
 		}
 
-		ElementData.call(ElementData.val, ElementData.alpha)
+		if not lib.loadingConfig then ElementData.call(ElementData.val, ElementData.alpha) end
 	end
 
 	local function UpdateColorMap()
@@ -941,6 +1065,9 @@ function lib.subelements:addtscolor(...)
 
 	ElementData:Set(ElementData.val, ElementData.alpha)
 	RepositionColorPicker();
+	registerFlag(ElementData, function(value)
+		if type(value) == 'table' then ElementData:Set(value.value, value.alpha) end
+	end)
 end
 
 function lib.elements:newtoggle(...)
@@ -958,6 +1085,7 @@ end
 function lib.elements:newslider(...)
 	local data = lib:overwrite({
 		text = 'browen';
+		flag = nil;
 		val = 0;
 		min = 20;
 		max = 100;
@@ -1006,6 +1134,7 @@ function lib.elements:newslider(...)
 
 	function data:set(v)
 		data.val = v;
+		lib:setFlag(getFlagName(data), v)
 
 		val.Text = `{data.prefix}{formatValue(data.val)}{data.suffix}`
 
@@ -1013,13 +1142,14 @@ function lib.elements:newslider(...)
 			data.axis == 'x' and ((data.val - data.min) / (data.max - data.min)) or 1,
 			data.axis == 'x' and 1 or ((data.val - data.min) / (data.max - data.min))
 		)
-		data.call(v)
+		if not lib.loadingConfig then data.call(v) end
 	end
 
 	game:GetService('UserInputService').InputBegan:Connect(ie);
 	game:GetService('UserInputService').InputEnded:Connect(ie);
 	game:GetService('UserInputService').InputChanged:Connect(ie);
 	data:set(data.val)
+	registerFlag(data, function(value) data:set(value) end)
 
 	return data
 end
@@ -1027,28 +1157,11 @@ end
 function lib.elements:newdropdown(...)
 	local data = lib:overwrite({
 		doomdtw_is_so_cute = self.doomdtw_is_so_cute;
+		flag = nil;
 		dropped = false;
 		multi = true;
 		val = {};
-		size = nil;
-		--list =  {
-		--	'Fuck';
-		--	'Joseph';
-		--	'Davinci';
-		--	'For';
-		--	'Scamming';
-		--	'Me';
-		--	'Out';
-		--	'Of';
-		--	'$150';
-		--	'For';
-		--	'A';
-		--	'Dead';
-		--	'Artists';
-		--	'Song';
-		--	'Go Harass Him at @josephdavinci on ig';
-		--	'and tell him to send me popstar 2.wav';
-		--};
+
 		list = {};
 		call = print;
 	}, ... or {})
@@ -1118,7 +1231,9 @@ function lib.elements:newdropdown(...)
 	end
 
 	function data:set(v)
-		data.call(v);
+		data.val = v
+		lib:setFlag(getFlagName(data), v)
+		if not lib.loadingConfig then data.call(v) end
 		hitboxlabel.Text = #data.val > 0 and table.concat(v, ', ') or 'none'
 	end
 
@@ -1225,6 +1340,8 @@ function lib:win(name, ...)
 
 
 		local tabbutton = new("TextButton", { Parent = tabbuttons; Name = "tabbutton"; AutoButtonColor = false; BackgroundColor3 = Color3.fromRGB(15, 15, 15); BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal); Size = UDim2.new(1, 0, 0, 30); Text = tab.name; TextColor3 = Color3.fromRGB(255, 255, 255); TextSize = 14; TextXAlignment = Enum.TextXAlignment.Left; }) :: TextButton 
+		tabbutton.LayoutOrder = #window.tabs + 1
+		if tab.name == "Settings" then window.settingsTabButton = tabbutton end
 		local accent = new("Frame", { Parent = tabbutton; Name = "accent"; AnchorPoint = Vector2.new(0, 0.5); BackgroundColor3 = lib.theme.accent; BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Position = UDim2.new(0, -9, 0.5, 0); Size = UDim2.new(0, 2, 1, -2); Visible = false; }) 
 		new("UIStroke", { Parent = tabbutton; ApplyStrokeMode = Enum.ApplyStrokeMode.Border; BorderStrokePosition = Enum.BorderStrokePosition.Inner; }) 
 		new("UIPadding", { Parent = tabbutton; PaddingLeft =UDim.new(0, 10); }) 
@@ -1295,9 +1412,57 @@ function lib:win(name, ...)
 
 		if #window.tabs == 0 then tab:toggle(true); else tab:toggle(false) end
 		table.insert(window.tabs, tab)
+		if window.settingsTabButton then window.settingsTabButton.LayoutOrder = #window.tabs + 1 end
 		tabbutton.Activated:Connect(tab['toggle']);
 		return tab
 	end
+
+	local settingsTab = window:tab("Settings")
+	local settingsGroup = settingsTab:group("Configuration", {side = "left"})
+	local configName = new("TextBox", {Parent = settingsGroup.doomdtw_is_so_cute; BackgroundColor3 = Color3.fromRGB(18, 18, 18); BorderColor3 = Color3.fromRGB(28, 28, 28); ClearTextOnFocus = false; Font = Enum.Font.Code; PlaceholderText = "Config name"; Size = UDim2.new(1, 0, 0, 22); Text = window.title ~= '' and window.title or "Inertia"; TextColor3 = lib.theme.t2; TextSize = 13;})
+	local configList = new("TextLabel", {Parent = settingsGroup.doomdtw_is_so_cute; BackgroundTransparency = 1; Font = Enum.Font.Code; Size = UDim2.new(1, 0, 0, 30); Text = "Saved: none"; TextColor3 = lib.theme.t2; TextSize = 11; TextWrapped = true; TextXAlignment = Enum.TextXAlignment.Left;})
+	local autoLoadLabel = new("TextLabel", {Parent = settingsGroup.doomdtw_is_so_cute; BackgroundTransparency = 1; Font = Enum.Font.Code; Size = UDim2.new(1, 0, 0, 18); Text = "Auto Load: none"; TextColor3 = lib.theme.t2; TextSize = 11; TextXAlignment = Enum.TextXAlignment.Left;})
+	local function refreshConfigList()
+		local configs = lib:listConfigs()
+		configList.Text = #configs > 0 and "Saved: " .. table.concat(configs, ", ") or "Saved: none"
+	end
+	settingsGroup:butt({text = "Save Config"; call = function()
+		local name = configName.Text
+		if lib:saveConfig(name) then
+			refreshConfigList()
+			lib:notify("Config Saved", name)
+		else
+			lib:notify("Config Error", "Save failed")
+		end
+	end;})
+	settingsGroup:butt({text = "Load Config"; call = function()
+		local name = configName.Text
+		if lib:loadConfig(name) then
+			lib:notify("Config Loaded", name)
+		else
+			lib:notify("Config Error", name .. " not found")
+		end
+	end;})
+	settingsGroup:butt({text = "Set Auto Load"; call = function()
+		local name = configName.Text
+		if lib:setAutoLoadConfig(name) then
+			autoLoadLabel.Text = "Auto Load: " .. name
+			lib:notify("Auto Load Set", name)
+		else
+			lib:notify("Config Error", "Could not set auto load")
+		end
+	end;})
+	settingsGroup:butt({text = "Reset Config"; call = function()
+		lib:resetConfig()
+		lib:notify("Config Reset", "Defaults restored")
+	end;})
+	refreshConfigList()
+	local savedAutoLoad = lib:getAutoLoadConfig()
+	if savedAutoLoad then autoLoadLabel.Text = "Auto Load: " .. savedAutoLoad end
+	task.delay(0.25, function()
+		local autoLoadConfig = lib:getAutoLoadConfig()
+		if autoLoadConfig then lib:loadConfig(autoLoadConfig) end
+	end)
 
 	window.i = windowframe
 	table.insert(lib['BROWEN😂😂'], window)
@@ -1326,6 +1491,7 @@ if RUN_EXAMPLE then
 
 	general:newtoggle({
 		text = "Enable Feature";
+		flag = "enableFeature";
 		val = true;
 		call = function(value)
 			lib:notify("Feature", value and "Enabled" or "Disabled")
@@ -1334,13 +1500,14 @@ if RUN_EXAMPLE then
 
 	general:newslider({
 		text = "Volume";
+		flag = "volume";
 		min = 0;
 		max = 100;
 		val = 50;
 		prefix = "";
 		suffix = "%";
 		call = function(value)
-			print("Volume:", value)
+			return value
 		end;
 	})
 
@@ -1355,6 +1522,7 @@ if RUN_EXAMPLE then
 
 	extras:newdropdown({
 		text = "Preset";
+		flag = "preset";
 		list = {"Default", "Performance", "Visuals"};
 		multi = false;
 		val = {"Default"};
@@ -1365,6 +1533,7 @@ if RUN_EXAMPLE then
 
 	extras:newcolor({
 		text = "Accent Color";
+		flag = "accentColor";
 		val = lib.theme.accent;
 		call = function(value)
 			lib.theme.accent = value
