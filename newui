@@ -260,116 +260,6 @@ lib.overlays = {
 }
 lib.visible = true
 lib.overlayLinks = {}
-lib.cursor = {
-	root = nil;
-	connections = {};
-	enabled = false;
-	previousMouseIconEnabled = true;
-}
-
-function lib:setupCursor()
-	if self.cursor.root then
-		return
-	end
-
-	local crosshair = new("Frame", {
-		Parent = self.ui;
-		Name = "CustomCrosshair";
-		AnchorPoint = Vector2.new(0.5, 0.5);
-		BackgroundTransparency = 1;
-		BorderSizePixel = 0;
-		Position = UDim2.fromOffset(0, 0);
-		Size = UDim2.fromOffset(16, 16);
-		Visible = false;
-		ZIndex = 500;
-	}) :: Frame
-
-	new("Frame", {
-		Parent = crosshair;
-		Name = "HorizontalOutline";
-		AnchorPoint = Vector2.new(0.5, 0.5);
-		BackgroundColor3 = Color3.fromRGB(0, 0, 0);
-		BorderSizePixel = 0;
-		Position = UDim2.fromScale(0.5, 0.5);
-		Size = UDim2.fromOffset(16, 4);
-		ZIndex = 500;
-	})
-
-	new("Frame", {
-		Parent = crosshair;
-		Name = "VerticalOutline";
-		AnchorPoint = Vector2.new(0.5, 0.5);
-		BackgroundColor3 = Color3.fromRGB(0, 0, 0);
-		BorderSizePixel = 0;
-		Position = UDim2.fromScale(0.5, 0.5);
-		Size = UDim2.fromOffset(4, 16);
-		ZIndex = 500;
-	})
-
-	new("Frame", {
-		Parent = crosshair;
-		Name = "Horizontal";
-		AnchorPoint = Vector2.new(0.5, 0.5);
-		BackgroundColor3 = self.theme.accent;
-		BorderSizePixel = 0;
-		Position = UDim2.fromScale(0.5, 0.5);
-		Size = UDim2.fromOffset(14, 2);
-		ZIndex = 501;
-	})
-
-	new("Frame", {
-		Parent = crosshair;
-		Name = "Vertical";
-		AnchorPoint = Vector2.new(0.5, 0.5);
-		BackgroundColor3 = self.theme.accent;
-		BorderSizePixel = 0;
-		Position = UDim2.fromScale(0.5, 0.5);
-		Size = UDim2.fromOffset(2, 14);
-		ZIndex = 501;
-	})
-
-	self.cursor.root = crosshair
-
-	local function updateCursorPosition()
-		if not self.cursor.root then
-			return
-		end
-		self.cursor.root.Position = UDim2.fromOffset(Mouse.X, Mouse.Y)
-	end
-
-	self.cursor.connections[#self.cursor.connections + 1] = UserInputService.InputChanged:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseMovement then
-			updateCursorPosition()
-		end
-	end)
-
-	self.cursor.connections[#self.cursor.connections + 1] = game:GetService("RunService").RenderStepped:Connect(function()
-		if self.cursor.enabled then
-			updateCursorPosition()
-		end
-	end)
-end
-
-function lib:setCustomCursorEnabled(enabled: boolean)
-	self:setupCursor()
-
-	if enabled then
-		if not self.cursor.enabled then
-			self.cursor.previousMouseIconEnabled = UserInputService.MouseIconEnabled
-		end
-		self.cursor.enabled = true
-		self.cursor.root.Visible = true
-		UserInputService.MouseIconEnabled = false
-	else
-		if self.cursor.enabled then
-			UserInputService.MouseIconEnabled = self.cursor.previousMouseIconEnabled
-		end
-		self.cursor.enabled = false
-		if self.cursor.root then
-			self.cursor.root.Visible = false
-		end
-	end
-end
 
 local function overlayLabel(parent, properties)
 	properties.Parent = parent
@@ -498,7 +388,6 @@ function lib:setVisible(visible: boolean?)
 			end
 		end
 	end
-	lib:setCustomCursorEnabled(lib.visible)
 	return lib.visible
 end
 
