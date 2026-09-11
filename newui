@@ -11,12 +11,7 @@ local lib = {
 	flags = {};
 	defaults = {};
 	flagControls = {};
-	pending = {};
-	unsaved = {};
-	connections = {};
-	popups = {};
 	loadingConfig = false;
-	unloaded = false;
 	['BROWEN😂😂'] = {};
 
 	presets = {
@@ -41,7 +36,6 @@ local Mouse = Client:GetMouse();
 local TweenService = game:GetService('TweenService')
 local UserInputService = game:GetService('UserInputService')
 local HttpService = game:GetService('HttpService')
-local RunService = game:GetService('RunService')
 
 lib.subelements.__index = lib.subelements;
 lib.elements.__index = lib.elements;
@@ -146,34 +140,6 @@ function lib:validinput(i)
 	}, i.UserInputType)
 end
 
--- Every service-level connection goes through here so lib:unload() can cut them all.
-function lib:connect(signal: RBXScriptSignal, callback: (...any) -> ())
-	local connection = signal:Connect(callback)
-	table.insert(self.connections, connection)
-	return connection
-end
-
--- Floating frames (dropdown lists, colour pickers, keybind mode menus) parented to lib.ui.
--- They are not children of the window, so hiding the window or switching tabs has to close them.
-function lib:addPopup(frame: GuiObject, onClose: (() -> ())?)
-	table.insert(self.popups, {frame = frame; onClose = onClose;})
-end
-
-function lib:closePopups(except: GuiObject?)
-	for _, popup in next, self.popups do
-		if popup.frame ~= except and popup.frame.Parent and popup.frame.Visible then
-			popup.frame.Visible = false
-			if popup.onClose then popup.onClose() end
-		end
-	end
-end
-
-local function mouseOver(gui: GuiObject): boolean
-	local position, size = gui.AbsolutePosition, gui.AbsoluteSize
-	return Mouse.X >= position.X and Mouse.X <= position.X + size.X
-		and Mouse.Y >= position.Y and Mouse.Y <= position.Y + size.Y
-end
-
 function lib:setFlag(flag: string?, value: any)
 	if flag and flag ~= '' then
 		self.flags[flag] = value
@@ -213,48 +179,13 @@ local function deserializeValue(value)
 	return value
 end
 
-local function copyValue(value)
-	if type(value) ~= 'table' then
-		return value
-	end
-	local result = {}
-	for key, child in pairs(value) do
-		result[key] = copyValue(child)
-	end
-	return result
-end
-
-function lib:configName(name: string?): string
-	local configName = (tostring(name or ''):gsub('[^%w%-_ ]', ''):gsub('^%s+', ''):gsub('%s+$', ''))
-	return configName ~= '' and configName or 'Inertia'
-end
-
-function lib:configExists(name: string?): boolean
-	local filename = 'Inertia/' .. self:configName(name) .. '.json'
-	if type(isfile) == 'function' then
-		local success, exists = pcall(isfile, filename)
-		return success and exists == true
-	end
-	return type(readfile) == 'function' and (pcall(readfile, filename))
-end
-
 function lib:saveConfig(name: string?)
 	if type(writefile) ~= 'function' then return false end
+	local configName = tostring(name or 'Inertia'):gsub('[^%w%-%_ ]', '')
+	if configName == '' then configName = 'Inertia' end
 	if type(makefolder) == 'function' then pcall(makefolder, 'Inertia') end
-
-	local saved = {}
-	for flag, value in pairs(self.flags) do
-		if not self.unsaved[flag] then
-			saved[flag] = serializeValue(value)
-		end
-	end
-
-	local encoded, json = pcall(HttpService.JSONEncode, HttpService, saved)
-	if not encoded then
-		warn('[Inertia] config encode failed: ' .. tostring(json))
-		return false
-	end
-	return (pcall(writefile, 'Inertia/' .. self:configName(name) .. '.json', json))
+	local success = pcall(writefile, 'Inertia/' .. configName .. '.json', HttpService:JSONEncode(serializeValue(self.flags)))
+	return success
 end
 
 function lib:listConfigs()
@@ -269,36 +200,18 @@ function lib:listConfigs()
 	return configs
 end
 
-local function applyFlag(flag: string, value: any)
-	local setter = lib.flagControls[flag]
-	if not setter then
-		return
-	end
-	local success, err = pcall(setter, value)
-	if not success then
-		warn(string.format('[Inertia] failed to apply %s: %s', flag, tostring(err)))
-	end
-end
-
--- Setters run with callbacks live, so a loaded config actually switches features on.
--- Flags whose element does not exist yet are parked in lib.pending and applied when it registers.
 function lib:loadConfig(name: string?)
-	local filename = 'Inertia/' .. self:configName(name) .. '.json'
-	if type(readfile) ~= 'function' or not self:configExists(name) then return false end
+	local configName = tostring(name or 'Inertia'):gsub('[^%w%-%_ ]', '')
+	if configName == '' then configName = 'Inertia' end
+	local filename = 'Inertia/' .. configName .. '.json'
+	if type(readfile) ~= 'function' or (type(isfile) == 'function' and not isfile(filename)) then return false end
 	local success, data = pcall(function() return HttpService:JSONDecode(readfile(filename)) end)
 	if not success or type(data) ~= 'table' then return false end
-
 	self.loadingConfig = true
 	for flag, value in pairs(data) do
-		if not self.unsaved[flag] then
-			local decoded = deserializeValue(value)
-			if self.flagControls[flag] then
-				applyFlag(flag, decoded)
-			else
-				self.pending[flag] = decoded
-				self:setFlag(flag, decoded)
-			end
-		end
+		local decoded = deserializeValue(value)
+		self:setFlag(flag, decoded)
+		if self.flagControls[flag] then self.flagControls[flag](decoded) end
 	end
 	self.loadingConfig = false
 	return true
@@ -306,70 +219,38 @@ end
 
 function lib:resetConfig()
 	for flag, value in pairs(self.defaults) do
-		if not self.unsaved[flag] then
-			applyFlag(flag, copyValue(value))
-		end
+		self:setFlag(flag, value)
+		if self.flagControls[flag] then self.flagControls[flag](value) end
 	end
 end
 
 function lib:setAutoLoadConfig(name: string)
-	if type(writefile) ~= 'function' or not self:configExists(name) then return false end
+	local configName = tostring(name or ''):gsub('[^%w%-%_ ]', '')
+	if configName == '' or type(writefile) ~= 'function' then return false end
 	if type(makefolder) == 'function' then pcall(makefolder, 'Inertia') end
-	return (pcall(writefile, 'Inertia/autoload.txt', self:configName(name)))
-end
-
-function lib:clearAutoLoadConfig()
-	if type(isfile) == 'function' and not isfile('Inertia/autoload.txt') then return true end
-	if type(delfile) == 'function' then
-		return (pcall(delfile, 'Inertia/autoload.txt'))
-	end
-	return type(writefile) == 'function' and (pcall(writefile, 'Inertia/autoload.txt', ''))
+	return pcall(writefile, 'Inertia/autoload.txt', configName)
 end
 
 function lib:getAutoLoadConfig()
 	if type(readfile) ~= 'function' or (type(isfile) == 'function' and not isfile('Inertia/autoload.txt')) then return nil end
 	local success, name = pcall(readfile, 'Inertia/autoload.txt')
-	if not success or type(name) ~= 'string' then return nil end
-	name = name:gsub('^%s+', ''):gsub('%s+$', '')
-	return name ~= '' and name or nil
-end
-
-function lib:loadAutoloadConfig()
-	local name = self:getAutoLoadConfig()
-	if not name then return false end
-	return self:loadConfig(name), name
+	return success and name ~= '' and name or nil
 end
 
 local function getFlagName(data)
 	return data.flag or data.text
 end
 
--- value is what the flag stores (and what a reset restores); it defaults to data.val.
--- save = false keeps the flag out of saved configs (e.g. lists of live player names).
-local function bindFlag(flag: string?, setter: (any) -> (), value: any, save: boolean?)
-	if not flag or flag == '' then
-		return
-	end
-
-	lib.unsaved[flag] = save == false or nil
-	lib.defaults[flag] = copyValue(value)
-	lib.flagControls[flag] = setter
-
-	local pending = lib.pending[flag]
-	lib.pending[flag] = nil
-	if pending ~= nil and save ~= false then
-		applyFlag(flag, pending)
-	else
-		lib:setFlag(flag, value)
+local function registerFlag(data, setter)
+	local flag = getFlagName(data)
+	if flag then
+		lib.defaults[flag] = data.val
+		lib.flagControls[flag] = setter
+		lib:setFlag(flag, data.val)
 	end
 end
 
-local function registerFlag(data, setter, value)
-	if value == nil then value = data.val end
-	bindFlag(getFlagName(data), setter, value, data.save)
-end
-
-lib.ui = new("ScreenGui", { Parent = RunService:IsStudio() and Client.PlayerGui or game.CoreGui, ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,})
+lib.ui = new("ScreenGui", { Parent = game:GetService('RunService'):IsStudio() and Client.PlayerGui or game.CoreGui, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,})
 
 lib.overlays = {
 	watermark = nil;
@@ -379,42 +260,116 @@ lib.overlays = {
 }
 lib.visible = true
 lib.overlayLinks = {}
+lib.cursor = {
+	root = nil;
+	connections = {};
+	enabled = false;
+	previousMouseIconEnabled = true;
+}
 
-
-
-
--- Tears everything down and hands the mouse back to the game. Destroying lib.ui calls this too.
-function lib:unload()
-	if self.unloaded then
+function lib:setupCursor()
+	if self.cursor.root then
 		return
 	end
 
+	local crosshair = new("Frame", {
+		Parent = self.ui;
+		Name = "CustomCrosshair";
+		AnchorPoint = Vector2.new(0.5, 0.5);
+		BackgroundTransparency = 1;
+		BorderSizePixel = 0;
+		Position = UDim2.fromOffset(0, 0);
+		Size = UDim2.fromOffset(16, 16);
+		Visible = false;
+		ZIndex = 500;
+	}) :: Frame
 
-	self.unloaded = true
-	self.visible = false
+	new("Frame", {
+		Parent = crosshair;
+		Name = "HorizontalOutline";
+		AnchorPoint = Vector2.new(0.5, 0.5);
+		BackgroundColor3 = Color3.fromRGB(0, 0, 0);
+		BorderSizePixel = 0;
+		Position = UDim2.fromScale(0.5, 0.5);
+		Size = UDim2.fromOffset(16, 4);
+		ZIndex = 500;
+	})
 
+	new("Frame", {
+		Parent = crosshair;
+		Name = "VerticalOutline";
+		AnchorPoint = Vector2.new(0.5, 0.5);
+		BackgroundColor3 = Color3.fromRGB(0, 0, 0);
+		BorderSizePixel = 0;
+		Position = UDim2.fromScale(0.5, 0.5);
+		Size = UDim2.fromOffset(4, 16);
+		ZIndex = 500;
+	})
 
-	self:closetasks(self.connections)
-	self:closetasks(self.overlayLinks)
-	for _, window in next, self['BROWEN😂😂'] do
-		if window.links then
-			self:closetasks(window.links)
+	new("Frame", {
+		Parent = crosshair;
+		Name = "Horizontal";
+		AnchorPoint = Vector2.new(0.5, 0.5);
+		BackgroundColor3 = self.theme.accent;
+		BorderSizePixel = 0;
+		Position = UDim2.fromScale(0.5, 0.5);
+		Size = UDim2.fromOffset(14, 2);
+		ZIndex = 501;
+	})
+
+	new("Frame", {
+		Parent = crosshair;
+		Name = "Vertical";
+		AnchorPoint = Vector2.new(0.5, 0.5);
+		BackgroundColor3 = self.theme.accent;
+		BorderSizePixel = 0;
+		Position = UDim2.fromScale(0.5, 0.5);
+		Size = UDim2.fromOffset(2, 14);
+		ZIndex = 501;
+	})
+
+	self.cursor.root = crosshair
+
+	local function updateCursorPosition()
+		if not self.cursor.root then
+			return
 		end
-	end
-	for _, entry in next, self.overlays.keybindItems do
-		entry.data.pressed = false
-		entry.data.active = false
+		self.cursor.root.Position = UDim2.fromOffset(Mouse.X, Mouse.Y)
 	end
 
+	self.cursor.connections[#self.cursor.connections + 1] = UserInputService.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement then
+			updateCursorPosition()
+		end
+	end)
 
-	pcall(function()
-		self.ui:Destroy()
+	self.cursor.connections[#self.cursor.connections + 1] = game:GetService("RunService").RenderStepped:Connect(function()
+		if self.cursor.enabled then
+			updateCursorPosition()
+		end
 	end)
 end
 
-lib.ui.Destroying:Connect(function()
-	lib:unload()
-end)
+function lib:setCustomCursorEnabled(enabled: boolean)
+	self:setupCursor()
+
+	if enabled then
+		if not self.cursor.enabled then
+			self.cursor.previousMouseIconEnabled = UserInputService.MouseIconEnabled
+		end
+		self.cursor.enabled = true
+		self.cursor.root.Visible = true
+		UserInputService.MouseIconEnabled = false
+	else
+		if self.cursor.enabled then
+			UserInputService.MouseIconEnabled = self.cursor.previousMouseIconEnabled
+		end
+		self.cursor.enabled = false
+		if self.cursor.root then
+			self.cursor.root.Visible = false
+		end
+	end
+end
 
 local function overlayLabel(parent, properties)
 	properties.Parent = parent
@@ -444,7 +399,7 @@ local function makeDraggable(frame)
 		end
 	end)
 
-	moveConnection = lib:connect(UserInputService.InputChanged, function(input)
+	moveConnection = UserInputService.InputChanged:Connect(function(input)
 		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
 			local delta = input.Position - dragStart
 			frame.Position = UDim2.new(
@@ -456,7 +411,7 @@ local function makeDraggable(frame)
 		end
 	end)
 
-	endConnection = lib:connect(UserInputService.InputEnded, function(input)
+	endConnection = UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			stopDragging()
 		end
@@ -525,13 +480,7 @@ function lib:watermark(text: string?, position: UDim2?)
 end
 
 function lib:setVisible(visible: boolean?)
-	if lib.unloaded then
-		return false
-	end
 	lib.visible = visible == nil and not lib.visible or visible
-	if not lib.visible then
-		lib:closePopups()
-	end
 	for _, item in next, lib['BROWEN😂😂'] do
 		if item.i then
 			local scale = item.i:FindFirstChild("VisibilityScale") or new("UIScale", {Parent = item.i; Name = "VisibilityScale"; Scale = 1;})
@@ -549,7 +498,7 @@ function lib:setVisible(visible: boolean?)
 			end
 		end
 	end
-
+	lib:setCustomCursorEnabled(lib.visible)
 	return lib.visible
 end
 
@@ -713,12 +662,15 @@ function lib.subelements:addtog(...)
 	local toggleStroke = new("UIStroke", { Parent = doomdtwlololololololo; ApplyStrokeMode = Enum.ApplyStrokeMode.Border; Color = Color3.fromRGB(60, 60, 60); }) 
 
 	function ElementData:Set(Value : boolean)
-		Value = Value == true
+		if ElementData.Children then
+			ContainerFrame.Visible = Value;
+		end
+
 		doomdtwlololololololo.BackgroundColor3 = Value and (lib.theme.accent) or (Color3.fromRGB(18,18,18))
 		toggleStroke.Color = Value and Color3.fromRGB(0, 0, 0) or Color3.fromRGB(60, 60, 60)
 		ElementData.val = Value;
 		lib:setFlag(getFlagName(ElementData), Value)
-		ElementData.call(Value)
+		if not lib.loadingConfig then ElementData.call(Value) end
 	end
 
 	doomdtwlololololololo.Activated:Connect(function()
@@ -726,10 +678,10 @@ function lib.subelements:addtog(...)
 	end)
 
 	ElementData:Set(ElementData.val);
+	lib:setFlag(getFlagName(ElementData), ElementData.val)
 	registerFlag(ElementData, function(value) ElementData:Set(value) end)
 
-	-- Falls through to the row, so toggle:addkiki() / toggle:addtscolor() chain onto the same line.
-	setmetatable(ElementData, {__index = self});
+	setmetatable(ElementData, lib.SubElements);
 	return ElementData
 end
 
@@ -755,58 +707,66 @@ function lib.subelements:addkiki(...)
 	new("UIPadding", { Parent = ElementButton, PaddingLeft = UDim.new(0, 5), PaddingRight = UDim.new(0, 5), }) 
 
 	local function gsub(e)
-		return (tostring(e)
+		return tostring(e)
 			:gsub('Enum%.KeyCode%.', '')
 			:gsub('Enum%.UserInputType%.', '')
 			:gsub('ouse', '')
-			:gsub('utton', ''))
+			:gsub('utton', '')
 	end
 
-	-- Any of these (or nil/false) means unbound. Unbound is stored as false so configs keep it.
-	local Unbound = {
-		RightSuper = true; LeftSuper = true; BackSlash = true; Backspace = true;
-		Unknown = true; Return = true; Escape = true; None = true; ['?'] = true; [''] = true;
-	}
+	function ElementData:Set(eeeee : string)
+		local Blacklist = {
+			'RightSuper',
+			'LeftSuper',
+			'BackSlash',
+			'Backspace',
+			'Unknown',
+			'Return',
+			'Escape',
+		}
 
-	local function refresh()
+		if eeeee == nil then
+			ButtonLabel.Text = '?'
+			ElementData.val = nil
+			lib:setFlag(getFlagName(ElementData), nil)
+			if ElementData._refreshKeybind then
+				ElementData._refreshKeybind()
+			end
+			return
+		end
+
+		local stripped = gsub(eeeee)
+
+		if table.find(Blacklist, stripped) then
+			ButtonLabel.Text = '?'
+			ElementData.val = nil
+			lib:setFlag(getFlagName(ElementData), nil)
+			if ElementData._refreshKeybind then
+				ElementData._refreshKeybind()
+			end
+			return
+		end
+
+		ButtonLabel.Text = gsub(eeeee)
+		ElementData.val = gsub(eeeee)
+		lib:setFlag(getFlagName(ElementData), ElementData.val)
 		if ElementData._refreshKeybind then
 			ElementData._refreshKeybind()
 		end
 	end
 
-	function ElementData:Set(Key : any)
-		local stripped = (Key ~= nil and Key ~= false) and gsub(Key) or nil
-		if stripped and Unbound[stripped] then
-			stripped = nil
-		end
-
-		ElementData.val = stripped
-		ButtonLabel.Text = stripped or '?'
-		lib:setFlag(getFlagName(ElementData), stripped or false)
-		refresh()
-	end
-
-	local function matches(Input: InputObject): boolean
-		local key = ElementData.val
-		return key ~= nil and (gsub(Input.KeyCode) == key or gsub(Input.UserInputType) == key)
-	end
-
 	local modeFlag = getFlagName(ElementData) and (getFlagName(ElementData) .. '_mode') or nil
 	local modeList = ElementData.modes or (ElementData.mode ~= 'Click' and {'Always'; 'Toggle'; 'Hold';} or nil)
-	local modeMenu, modeButtons, modeReady = nil, {}, false
+	local modeMenu, modeButtons = nil, {}
 
 	function ElementData:SetMode(mode : string)
 		if mode ~= 'Always' and mode ~= 'Toggle' and mode ~= 'Hold' and mode ~= 'Click' then
 			return
 		end
 
-		-- Re-applying the current mode (a config load) must not switch an active Toggle off.
-		if mode ~= ElementData.mode or not modeReady then
-			ElementData.pressed = mode == 'Always'
-			ElementData.active = mode == 'Always'
-		end
 		ElementData.mode = mode
-		modeReady = true
+		ElementData.pressed = mode == 'Always'
+		ElementData.active = mode == 'Always'
 		if modeList and modeFlag then
 			lib:setFlag(modeFlag, mode)
 		end
@@ -815,10 +775,14 @@ function lib.subelements:addkiki(...)
 			button.TextColor3 = option == mode and lib.theme.accent or lib.theme.t2
 		end
 
-		refresh()
+		if ElementData._refreshKeybind then
+			ElementData._refreshKeybind()
+		end
 
-		local success, err = pcall(ElementData.modechanged, mode)
-		if not success then warn(err) end
+		if not lib.loadingConfig then
+			local _, CallFailure = pcall(ElementData.modechanged, mode)
+			if CallFailure then warn(CallFailure) end
+		end
 	end
 
 	if modeList then
@@ -837,124 +801,111 @@ function lib.subelements:addkiki(...)
 			end)
 		end
 
-		lib:addPopup(modeMenu)
-
 		ElementButton.MouseButton2Click:Connect(function()
-			if ElementData.skipMenu then
-				ElementData.skipMenu = false
-				return
-			end
-			if modeMenu.Visible then
-				modeMenu.Visible = false
-				return
-			end
-			lib:closePopups(modeMenu)
 			modeMenu.Position = UDim2.fromOffset(ElementButton.AbsolutePosition.X, ElementButton.AbsolutePosition.Y + ElementButton.AbsoluteSize.Y + 2)
-			modeMenu.Visible = true
+			modeMenu.Visible = not modeMenu.Visible
 		end)
 
-		lib:connect(UserInputService.InputBegan, function(Input)
-			if modeMenu.Visible and Input.UserInputType == Enum.UserInputType.MouseButton1 and not mouseOver(modeMenu) then
+		game:GetService('UserInputService').InputBegan:Connect(function(Input)
+			if not modeMenu.Visible or Input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+				return
+			end
+
+			local position, size = modeMenu.AbsolutePosition, modeMenu.AbsoluteSize
+			local inside = Mouse.X >= position.X and Mouse.X <= position.X + size.X
+				and Mouse.Y >= position.Y and Mouse.Y <= position.Y + size.Y
+			if not inside then
 				modeMenu.Visible = false
 			end
 		end)
 	end
 
 	ElementButton.Activated:Connect(function()
-		if ElementData.skipActivate then
-			ElementData.skipActivate = false
-			return
-		end
 		ElementData.Editing = true
 		ButtonLabel.Text = '...'
 	end)
 
-	local function release()
-		if ElementData.mode == 'Hold' then
-			ElementData.pressed = false
-			ElementData.active = false
-			refresh()
-		elseif ElementData.mode == 'Click' then
-			ElementData.active = false
-			refresh()
+	local KeybindBeginTask = game:GetService('UserInputService').InputBegan:Connect(function(Input, GameProcessedEvent)
+		-- Only a focused TextBox should block keybinds. Raw GameProcessedEvent
+		-- also flips true whenever the cursor is over ANY GuiButton (including
+		-- this menu's own elements), which was eating real keybind presses.
+		if UserInputService:GetFocusedTextBox() and not ElementData.Editing then
+			return
 		end
-	end
-
-	lib:connect(UserInputService.InputBegan, function(Input, GameProcessedEvent)
-		local kind = Input.UserInputType
 
 		if ElementData.Editing then
-			ElementData.Editing = false
-
-			-- Clicking the key button again cancels instead of binding MB1.
-			if kind == Enum.UserInputType.MouseButton1 and mouseOver(ElementButton) then
-				ElementData.skipActivate = true
-				ButtonLabel.Text = ElementData.val or '?'
-				return
-			end
-			-- Binding MB2 on the button itself must not also pop the mode menu open.
-			if kind == Enum.UserInputType.MouseButton2 and mouseOver(ElementButton) then
-				ElementData.skipMenu = true
-			end
-
-			ElementData:Set(kind == Enum.UserInputType.Keyboard and Input.KeyCode or kind)
+			ElementData:Set(Input.UserInputType ==Enum.UserInputType.Keyboard and gsub(Input.KeyCode) or gsub(Input.UserInputType))
+			ElementData.Editing = false;
 			return
 		end
 
-		-- A fresh press means any skip left over from a click released off the button is stale.
-		if kind == Enum.UserInputType.MouseButton1 then
-			ElementData.skipActivate = false
-		elseif kind == Enum.UserInputType.MouseButton2 then
-			ElementData.skipMenu = false
-		end
+		if gsub(Input.KeyCode) == ElementData.val or gsub(Input.UserInputType) == ElementData.val then
+			if ElementData.mode == 'Hold' then
+				if ElementData.pressed then
+					-- already holding (e.g. OS key-repeat firing InputBegan again);
+					-- don't spawn a second concurrent loop
+					return
+				end
 
-		if GameProcessedEvent or not matches(Input) then
-			return
-		end
+				ElementData.pressed = true
+				ElementData.active = true
+				if ElementData._refreshKeybind then ElementData._refreshKeybind() end
 
-		if ElementData.mode == 'Hold' then
-			ElementData.pressed = true
-			ElementData.active = true
-			refresh()
+				task.spawn(function()
+					while ElementData.pressed and ElementData.mode == 'Hold' do
+						local _, CallFailure = pcall(function()
+							ElementData.call(ElementData.val)
+						end)
 
-			while ElementData.pressed and ElementData.mode == 'Hold' and not lib.unloaded do task.wait()
-				local success, err = pcall(ElementData.call, ElementData.val)
-				if not success then warn(err) end
+						if CallFailure then warn(CallFailure) end
+						task.wait()
+					end
+				end)
+			elseif ElementData.mode == 'Toggle' then
+				ElementData.pressed = not ElementData.pressed
+				ElementData.active = ElementData.pressed
+				if ElementData._refreshKeybind then ElementData._refreshKeybind() end
+				local _, CallFailure = pcall(function()
+					ElementData.call(ElementData.val, ElementData.pressed)
+				end)
+				if CallFailure then warn(CallFailure) end
+			elseif ElementData.mode == 'Click' then
+				ElementData.active = true
+				if ElementData._refreshKeybind then ElementData._refreshKeybind() end
+				local _, CallFailure = pcall(function()
+					ElementData.call(ElementData.val)
+				end)
+
+				if CallFailure then warn(CallFailure) end
 			end
-		elseif ElementData.mode == 'Toggle' then
-			ElementData.pressed = not ElementData.pressed
-			ElementData.active = ElementData.pressed
-			refresh()
-			local success, err = pcall(ElementData.call, ElementData.val, ElementData.pressed)
-			if not success then warn(err) end
-		elseif ElementData.mode == 'Click' then
-			ElementData.active = true
-			refresh()
-			local success, err = pcall(ElementData.call, ElementData.val)
-			if not success then warn(err) end
 		end
 	end)
 
-	-- No gameProcessed filter on release: letting go over the menu or chat must still end a Hold.
-	lib:connect(UserInputService.InputEnded, function(Input)
-		if matches(Input) then
-			release()
+	local KeybindEndTask = game:GetService('UserInputService').InputEnded:Connect(function(Input, GPE)
+		-- Release must always be honored regardless of GPE - if a Hold keybind's
+		-- release is ever swallowed here, ElementData.pressed never clears and
+		-- the feature gets stuck on (and desyncs future presses).
+		if (gsub(Input.KeyCode) == ElementData.val or gsub(Input.UserInputType) == ElementData.val) and ElementData.mode == 'Hold' then
+			ElementData.pressed = false
+			ElementData.active = false
+			if ElementData._refreshKeybind then ElementData._refreshKeybind() end
+		end
+
+		if (gsub(Input.KeyCode) == ElementData.val or gsub(Input.UserInputType) == ElementData.val) and ElementData.mode == 'Click' then
+			ElementData.active = false
+			if ElementData._refreshKeybind then ElementData._refreshKeybind() end
 		end
 	end)
-
-	-- Alt-tabbing mid-hold never delivers InputEnded.
-	lib:connect(UserInputService.WindowFocusReleased, release)
 
 	ElementData:Set(ElementData.val)
 	lib:_registerKeybind(ElementData, ElementData.text, ElementData.val)
+	registerFlag(ElementData, function(value) ElementData:Set(value) end)
+
 	ElementData:SetMode(ElementData.mode)
-
-	registerFlag(ElementData, function(value) ElementData:Set(value) end, ElementData.val or false)
 	if modeList and modeFlag then
-		bindFlag(modeFlag, function(value) ElementData:SetMode(value) end, ElementData.mode, ElementData.save)
+		lib.defaults[modeFlag] = ElementData.mode
+		lib.flagControls[modeFlag] = function(value) ElementData:SetMode(value) end
 	end
-
-	return ElementData
 end
 
 function lib.subelements:addtscolor(...)
@@ -976,6 +927,8 @@ function lib.subelements:addtscolor(...)
 	new("UIStroke", { Parent = ElementButton, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, }) 
 	new("UIPadding", { Parent = ElementButton, PaddingLeft = UDim.new(0, 5), PaddingRight = UDim.new(0, 5), }) 
 	new("UIGradient", { Parent = ElementButton, Color = ColorSequence.new{ ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)), ColorSequenceKeypoint.new(1, Color3.fromRGB(152, 152, 152)) }, Rotation = 90, }) 
+
+	local PreviewButton = ElementButton
 
 	local ColorPickerFrame = new("Frame", { Parent = lib.ui, Visible = false; Name = "ColorPickerFrame", BackgroundColor3 = Color3.fromRGB(13, 13, 13), BorderColor3 = Color3.fromRGB(0, 0, 0), BorderSizePixel = 0, Position = UDim2.fromScale(0.7144556641578674, 0.4033333361148834), Size = UDim2.fromOffset(180, 180), }) :: Frame 
 	local ColorMap = new("Frame", { Parent = ColorPickerFrame, Name = "Map", BackgroundColor3 = Color3.fromRGB(255, 255, 255), BorderColor3 = Color3.fromRGB(0, 0, 0), BorderSizePixel = 0, Size = UDim2.fromOffset(150, 150), }) :: Frame 
@@ -1045,9 +998,9 @@ function lib.subelements:addtscolor(...)
 
 	local Editing = false;
 
-	-- The picker's own HSV state. The markers tween, so reading them back mid-tween (as the old
-	-- code did) made the colour jump back whenever a second bar was touched.
-	local Hue, Saturation, Brightness = 0, 0, 1
+	local AlphaBarValue = 1;
+	local HueBarValue = 0;
+	local ColorMapValue = { X = 0; Y = 0; }
 
 	local function RepositionColorPicker()
 		ColorPickerFrame.Position = UDim2.fromOffset(
@@ -1056,134 +1009,214 @@ function lib.subelements:addtscolor(...)
 		)
 	end
 
-	-- Accepts "r, g, b[, alpha]" (0-255) or a hex string.
-	local function StringToColor(String : string): (Color3?, number?)
-		local ColorData = String:split(',')
-		if #ColorData >= 3 then
-			local r, g, b = tonumber(ColorData[1]), tonumber(ColorData[2]), tonumber(ColorData[3])
-			if r and g and b then
-				return Color3.fromRGB(r, g, b), tonumber(ColorData[4])
-			end
-			return nil, nil
+	local function GetKeypointValue(sequence: ColorSequence, time: number)
+		if time == 0 then
+			return sequence.Keypoints[1].Value
+		elseif time == 1 then
+			return sequence.Keypoints[#sequence.Keypoints].Value
 		end
-		local success, color = pcall(Color3.fromHex, String)
-		return success and color or nil, nil
+
+		for i = 1, #sequence.Keypoints - 1 do
+			local ThisKeypoint = sequence.Keypoints[i]
+			local NextKeypoint = sequence.Keypoints[i + 1]
+			if time >= ThisKeypoint.Time and time < NextKeypoint.Time then
+				local Alpha = (time - ThisKeypoint.Time) / (NextKeypoint.Time - ThisKeypoint.Time)
+				return Color3.new(
+					(NextKeypoint.Value.R - ThisKeypoint.Value.R) * Alpha + ThisKeypoint.Value.R,
+					(NextKeypoint.Value.G - ThisKeypoint.Value.G) * Alpha + ThisKeypoint.Value.G,
+					(NextKeypoint.Value.B - ThisKeypoint.Value.B) * Alpha + ThisKeypoint.Value.B
+				)
+			end
+		end
 	end
 
-	local function Relative(frame: GuiObject): (number, number)
-		local AbsPos, AbsSize = frame.AbsolutePosition, frame.AbsoluteSize
-		return math.clamp((Mouse.X - AbsPos.X) / AbsSize.X, 0, 1), math.clamp((Mouse.Y - AbsPos.Y) / AbsSize.Y, 0, 1)
+	local function StringToColor(String : string)
+		local ColorData = String:split(',')
+		local ColorType = nil;
+
+		if #ColorData == 1 then ColorType = 'Hex' end
+		if #ColorData <= 3 then ColorType = 'HSV' end
+		if #ColorData >= 4 then ColorType = 'RGBA' end
+
+		for Index, value in ColorData do
+			ColorData[Index] = tonumber(value)
+		end
+
+		if ColorType == 'Hex' then
+			return Color3.fromHex(String), ColorData[2]
+		end
+
+		if ColorType == 'RGBA' then
+			return Color3.fromRGB(ColorData[1], ColorData[2], ColorData[3]), ColorData[4]
+		end
 	end
 
-	local function Slide(marker: GuiObject, x: number, y: number)
-		TweenService:Create(marker, TweenInfo.new(.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-			Position = UDim2.fromScale(x, y),
-			AnchorPoint = Vector2.new(x, y),
-		}):Play()
+	local function ColorToString(Color : Color3) : string
+		local Split = tostring(ElementData.alpha):split('.')
+		local Number = Split[1]
+		local Decimal = Split[2]
+
+		return string.gsub('%s, %s, %s, %s', 
+			math.floor(ElementData.val.R*255),
+			math.floor(ElementData.val.G*255),
+			math.floor(ElementData.val.B*255),
+			`{Number}{Decimal and `.{Decimal:sub(1,3)}` or ''}`
+		)
 	end
 
-	local function PaintHue()
-		SaturationGradient.Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, Color3.fromHSV(0, 0, 1));
-			ColorSequenceKeypoint.new(1, Color3.fromHSV(Hue, 1, 1));
-		})
-	end
+	local function UpdateColor(HSV, Alpha)
+		local PackedHSV = { HSV:ToHSV() }
 
-	local function UpdateColor(Color: Color3, Alpha: number?)
-		ElementData.val = Color
-		ElementData.alpha = math.clamp(Alpha or ElementData.alpha or 1, 0, 1)
+		Alpha = math.clamp(Alpha or 0, 0, 1)
+
+		ElementData.val = HSV or ElementData.val
+		ElementData.alpha = Alpha or ElementData.alpha
 		lib:setFlag(getFlagName(ElementData), {value = ElementData.val; alpha = ElementData.alpha;})
+
+		AlphaBarValue = (AlphaMarker.Position.X.Scale);
+		HueBarValue = HueMarker.Position.Y.Scale;
+		ColorMapValue = {
+			X = ColorMarker.Position.X.Scale;
+			Y = ColorMarker.Position.Y.Scale;
+		}
 
 		ElementButton.BackgroundColor3 = ElementData.val
 		ElementButton.BackgroundTransparency = (1-ElementData.alpha)
+
+		PreviewButton.BackgroundColor3 = ElementData.val
+		PreviewButton.BackgroundTransparency = (1-ElementData.alpha)
+
 		AlphaFill.BackgroundColor3 = ElementData.val
 
-		ElementData.call(ElementData.val, ElementData.alpha)
-	end
+		local Split = tostring(Alpha):split('.')
+		local Number = Split[1]
+		local Decimal = Split[2] or ''
 
-	local function UpdateMarkers()
-		ColorMarker.Position = UDim2.fromScale(Saturation, 1 - Brightness)
-		ColorMarker.AnchorPoint = Vector2.new(Saturation, 1 - Brightness)
-		HueMarker.Position = UDim2.fromScale(0.5, Hue)
-		HueMarker.AnchorPoint = Vector2.new(0.5, Hue)
-		AlphaMarker.Position = UDim2.fromScale(ElementData.alpha, 0.5)
-		AlphaMarker.AnchorPoint = Vector2.new(ElementData.alpha, 0.5)
-		PaintHue()
+		local RGBA = {
+			[1] = HSV.R;
+			[2] = HSV.G;
+			[3] = HSV.B;
+		}
+
+		if not lib.loadingConfig then ElementData.call(ElementData.val, ElementData.alpha) end
 	end
 
 	local function UpdateColorMap()
-		local x, y = Relative(ColorMap)
-		Slide(ColorMarker, x, y)
-		Saturation, Brightness = x, 1 - y
-		UpdateColor(Color3.fromHSV(Hue, Saturation, Brightness), ElementData.alpha)
+		local AbsPos = ColorMap.AbsolutePosition
+		local AbsSize = ColorMap.AbsoluteSize
+
+		local RelativeMouseX = math.clamp(((Mouse.X - AbsPos.X) / AbsSize.X), 0, 1)
+		local RelativeMouseY = math.clamp(((Mouse.Y - AbsPos.Y) / AbsSize.Y), 0, 1)
+
+		game:GetService('TweenService'):Create(
+			ColorMarker,
+			TweenInfo.new(.2,Enum.EasingStyle.Quart,Enum.EasingDirection.Out) ,
+			{ 
+				Position = UDim2.fromScale(RelativeMouseX, RelativeMouseY), 
+				AnchorPoint = Vector2.new(RelativeMouseX, RelativeMouseY) 
+			}
+		):Play();
+
+		local Color = {GetKeypointValue(SaturationGradient.Color, RelativeMouseX):ToHSV()}
+		local value = {GetKeypointValue(ValueGradient.Color, RelativeMouseY):ToHSV()}
+
+		ColorMapValue.X = RelativeMouseX
+		ColorMapValue.Y = RelativeMouseY
+
+		UpdateColor(Color3.fromHSV(Color[1], Color[2], value[3]), AlphaBarValue)
+	end
+
+	local function UpdateMarkers()
+		local ColorHSV = { ElementData.val:ToHSV() }
+
+		ColorMarker.Position = UDim2.fromScale(ColorHSV[2], 1-ColorHSV[3])
+		ColorMarker.AnchorPoint = Vector2.new(ColorHSV[2], 1-ColorHSV[3])
+		SaturationGradient.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0,Color3.fromHSV(0,0,1));
+			ColorSequenceKeypoint.new(1,Color3.fromHSV(ColorHSV[1], 1, 1));
+		})
+
+		HueMarker.Position = UDim2.fromScale(0.5, (ColorHSV[1]))
+		HueMarker.AnchorPoint = Vector2.new(0.5, (ColorHSV[1]))
+
+		AlphaMarker.Position = UDim2.fromScale((ElementData.alpha))
+		AlphaMarker.AnchorPoint = Vector2.new((ElementData.alpha))
 	end
 
 	local function UpdateHueBar()
-		local _, y = Relative(HueBar)
-		Slide(HueMarker, 0.5, y)
-		Hue = y
-		PaintHue()
-		UpdateColor(Color3.fromHSV(Hue, Saturation, Brightness), ElementData.alpha)
+		local AbsPos = HueBar.AbsolutePosition
+		local AbsSize = HueBar.AbsoluteSize
+
+		local RelativeMouseX = math.clamp(((Mouse.X - AbsPos.X) / AbsSize.X), 0, 1)
+		local RelativeMouseY = math.clamp(((Mouse.Y - AbsPos.Y) / AbsSize.Y), 0, 1)
+
+		game:GetService('TweenService'):Create(
+			HueMarker, 
+			TweenInfo.new(.2,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),
+			{ Position = UDim2.fromScale(0.5, RelativeMouseY), AnchorPoint = Vector2.new(0.5, RelativeMouseY) }
+		):Play();
+
+		local Color = GetKeypointValue(HueGradient.Color, RelativeMouseY)
+
+		SaturationGradient.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0,Color3.fromHSV(0,0,1));
+			ColorSequenceKeypoint.new(1, Color);
+		})
+
+		HueBarValue = RelativeMouseY
+
+		local Color = {GetKeypointValue(SaturationGradient.Color, ColorMapValue.X):ToHSV()}
+		local value = {GetKeypointValue(ValueGradient.Color, ColorMapValue.Y):ToHSV()}
+
+		UpdateColor(Color3.fromHSV(Color[1], Color[2], value[3]), AlphaBarValue)
 	end
 
 	local function UpdateAlphaBar()
-		local x = Relative(AlphaBar)
-		Slide(AlphaMarker, x, 0.5)
-		UpdateColor(ElementData.val, x)
+		local AbsPos = AlphaBar.AbsolutePosition
+		local AbsSize = AlphaBar.AbsoluteSize
+
+		local RelativeMouseX = math.clamp(((Mouse.X - AbsPos.X) / AbsSize.X), 0, 1)
+		local RelativeMouseY = math.clamp(((Mouse.Y - AbsPos.Y) / AbsSize.Y), 0, 1)
+
+		game:GetService('TweenService'):Create(
+			AlphaMarker,
+			TweenInfo.new(.2,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),
+			{ Position = UDim2.fromScale(RelativeMouseX, .5), AnchorPoint = Vector2.new(RelativeMouseX, .5) }
+		):Play();
+
+		AlphaBarValue = RelativeMouseX
+
+		local Color = {GetKeypointValue(SaturationGradient.Color, ColorMapValue.X):ToHSV()}
+		local value = {GetKeypointValue(ValueGradient.Color, ColorMapValue.Y):ToHSV()}
+
+		UpdateColor(Color3.fromHSV(Color[1], Color[2], value[3]), AlphaBarValue)
 	end
 
-	-- Takes a Color3 (+ alpha), a saved {value, alpha} table, or a "r, g, b[, a]" / hex string.
-	-- A missing alpha keeps the current one instead of turning the colour invisible.
-	function ElementData:Set(NewValue : any?, Alpha : number?)
-		if type(NewValue) == 'table' then
-			NewValue, Alpha = NewValue.value, NewValue.alpha
-		end
-		if typeof(NewValue) == 'string' then
-			local Parsed, ParsedAlpha = StringToColor(NewValue)
-			NewValue, Alpha = Parsed, ParsedAlpha or Alpha
-		end
-		if typeof(NewValue) ~= 'Color3' then
-			return
-		end
+	function ElementData:Set(NewValue : any?, Alpha : number)
+		local IsColor = typeof(NewValue) == 'Color3' and true or false
 
-		local h, s, v = NewValue:ToHSV()
-		if s > 0 and v > 0 then
-			Hue = h -- greys carry no hue; keep the bar where it was
+		if IsColor then
+			UpdateColor(NewValue, Alpha)
+			UpdateMarkers()
+		elseif not IsColor and typeof(NewValue) == 'string' then
+			local Converted = StringToColor(NewValue);
+			UpdateColor(Color3.fromRGB(Converted[1], Converted[2], Converted[3]), Converted[4])
+			UpdateMarkers()
 		end
-		Saturation, Brightness = s, v
-
-		UpdateColor(NewValue, Alpha)
-		UpdateMarkers()
 	end
 
-	ElementButton:GetPropertyChangedSignal('AbsolutePosition'):Connect(RepositionColorPicker)
-
-	lib:addPopup(ColorPickerFrame, function()
-		ElementData.Dropped = false
-		Editing = false
+	ElementButton:GetPropertyChangedSignal('AbsolutePosition'):Connect(function()
+		RepositionColorPicker()
 	end)
 
 	ElementButton.Activated:Connect(function()
-		local open = not ColorPickerFrame.Visible
-		if open then
-			lib:closePopups(ColorPickerFrame)
-		end
-		ColorPickerFrame.Visible = open
-		ElementData.Dropped = open
+		ColorPickerFrame.Visible = not ColorPickerFrame.Visible
+		ElementData.Dropped = ColorPickerFrame.Visible
 
 		RepositionColorPicker()
 	end)
 
-	local Editors = {
-		ColorMap = UpdateColorMap;
-		AlphaBar = UpdateAlphaBar;
-		HueBar = UpdateHueBar;
-	}
-
-	lib:connect(UserInputService.InputBegan, function(Input)
-		if not ColorPickerFrame.Visible then
-			return
-		end
+	game:GetService('UserInputService').InputBegan:Connect(function(Input)
 		if ((Input.UserInputType ==Enum.UserInputType.MouseButton1) or (Input.UserInputType ==Enum.UserInputType.Touch)) then
 			if AlphaBar.GuiState ==Enum.GuiState.Press then
 				Editing = "AlphaBar"
@@ -1202,31 +1235,37 @@ function lib.subelements:addtscolor(...)
 		end
 	end)
 
-	lib:connect(UserInputService.InputEnded, function(Input)
+	game:GetService('UserInputService').InputEnded:Connect(function(Input)
 		if ((Input.UserInputType ==Enum.UserInputType.MouseButton1) or (Input.UserInputType ==Enum.UserInputType.Touch)) then
 			Editing = false;
+
+			ElementData.Draggable = false;
 		end
 	end)
 
-	lib:connect(UserInputService.InputChanged, function(Input)
+	local Connections = {
+		ColorMap = UpdateColorMap;
+		AlphaBar = UpdateAlphaBar;
+		HueBar = UpdateHueBar;
+	}
+
+	game:GetService('UserInputService').InputChanged:Connect(function(Input)
 		if Input.UserInputType ==Enum.UserInputType.MouseMovement and Editing then
-			Editors[Editing]();
+			Connections[Editing]();
 		end
 	end)
 
-	lib:connect(UserInputService.TouchMoved, function(Input)
+	game:GetService('UserInputService').TouchMoved:Connect(function(Input)
 		if Input.UserInputType ==Enum.UserInputType.Touch and Editing then
-			Editors[Editing]();
+			Connections[Editing]();
 		end
 	end)
 
 	ElementData:Set(ElementData.val, ElementData.alpha)
 	RepositionColorPicker();
 	registerFlag(ElementData, function(value)
-		ElementData:Set(value)
-	end, {value = ElementData.val; alpha = ElementData.alpha;})
-
-	return ElementData
+		if type(value) == 'table' then ElementData:Set(value.value, value.alpha) end
+	end)
 end
 
 function lib.elements:newtoggle(...)
@@ -1274,13 +1313,10 @@ function lib.elements:newslider(...)
 
 	local function ie(Input : InputObject, GPE)
 		if Input.UserInputState == Enum.UserInputState.End then
-			-- Only letting go of the mouse ends a drag; releasing W mid-drag used to drop it.
-			if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
-				down = nil
-			end
-			return
+			down = nil
+		else
+			down = (down and (down) or hitbox.GuiState == Enum.GuiState.Press)
 		end
-		down = (down and (down) or hitbox.GuiState == Enum.GuiState.Press)
 
 		if down and lib:validinput(Input) then
 			local minb = hitbox.AbsolutePosition
@@ -1304,18 +1340,14 @@ function lib.elements:newslider(...)
 			data.axis == 'x' and ((data.val - data.min) / (data.max - data.min)) or 1,
 			data.axis == 'x' and 1 or ((data.val - data.min) / (data.max - data.min))
 		)
-		data.call(v)
+		if not lib.loadingConfig then data.call(v) end
 	end
 
-	lib:connect(UserInputService.InputBegan, ie);
-	lib:connect(UserInputService.InputEnded, ie);
-	lib:connect(UserInputService.InputChanged, ie);
+	game:GetService('UserInputService').InputBegan:Connect(ie);
+	game:GetService('UserInputService').InputEnded:Connect(ie);
+	game:GetService('UserInputService').InputChanged:Connect(ie);
 	data:set(data.val)
-	registerFlag(data, function(value)
-		if type(value) == 'number' then
-			data:set(math.clamp(value, data.min, data.max))
-		end
-	end)
+	registerFlag(data, function(value) data:set(value) end)
 
 	return data
 end
@@ -1358,15 +1390,7 @@ function lib.elements:newdropdown(...)
 	hitbox:GetPropertyChangedSignal('AbsoluteSize'):Connect(data['https://www.youtube.com/watch?v=8TNMsUnIXAE']);
 	hitbox:GetPropertyChangedSignal('AbsolutePosition'):Connect(data['https://www.youtube.com/watch?v=8TNMsUnIXAE']);
 
-	optionlist.Size = UDim2.fromOffset(data.size or 161, 0);
-
-	local function repaint()
-		for _, o in next, optionlist:GetChildren() do
-			if o:IsA('TextButton') and o ~= optionbutton then
-				o.TextColor3 = table.find(data.val, o.Text) and lib.theme.accent or lib.theme.t2
-			end
-		end
-	end
+	optionlist.Size = UDim2.fromOffset(data.size, 0);
 
 	for i,v in next, data.list do
 		local OwO= optionbutton:Clone();
@@ -1375,51 +1399,46 @@ function lib.elements:newdropdown(...)
 		OwO.Visible = true;
 		OwO.TextColor3 = lib.theme.t2
 
-		-- Always hand set() a fresh table: the flag and the caller may both hold the old one.
-		OwO.Activated:Connect(function()
-			local selected = table.clone(data.val)
-			local index = table.find(selected, v)
+		if table.find(data.val, v) then
+			OwO.TextColor3 = lib.theme.accent;
+		end
 
+		OwO.Activated:Connect(function()
 			if not data.multi then
-				selected = {v}
-			elseif index then
-				table.remove(selected, index)
-			else
-				table.insert(selected, v)
+				for _, o in next, optionlist:GetChildren() do
+					if o:IsA('TextButton') then
+						o.TextColor3 = lib.theme.t2
+						data.val = {};
+					end
+				end
 			end
 
-			data:set(selected);
+			if table.find(data.val, v) then
+				table.remove(data.val, table.find(data.val, v))
+				OwO.TextColor3 = lib.theme.t2
+
+				data:set(data.val);
+				return
+			end
+
+			table.insert(data.val, v)
+			OwO.TextColor3 = lib.theme.accent;
+
+			data:set(data.val);
 		end)
 	end
 
 	function data:set(v)
-		if type(v) ~= 'table' then v = {} end
 		data.val = v
 		lib:setFlag(getFlagName(data), v)
-		repaint()
+		if not lib.loadingConfig then data.call(v) end
 		hitboxlabel.Text = #data.val > 0 and table.concat(v, ', ') or 'none'
-		data.call(v)
 	end
 
-	lib:addPopup(optionlist, function()
-		dropdownicon.Rotation = 0
-	end)
-
 	hitbox.Activated:Connect(function()
-		local open = not optionlist.Visible
-		if open then
-			lib:closePopups(optionlist)
-		end
-		optionlist.Visible = open
-		dropdownicon.Rotation = open and 180 or 0
+		optionlist.Visible = not optionlist.Visible
+		dropdownicon.Rotation = optionlist.Visible and 180 or 0
 	end)
-
-	data:set(data.val)
-	registerFlag(data, function(value)
-		if type(value) == 'table' then
-			data:set(copyValue(value))
-		end
-	end, copyValue(data.val))
 
 	return data
 
@@ -1438,8 +1457,6 @@ function lib:win(name, ...)
 		tabs = {};
 		links = {};
 		active = true;
-		-- Pass false and call lib:loadAutoloadConfig() yourself once every element exists.
-		autoload = true;
 	}, ... or {})
 
 	local localLogo = resolveAsset(window.logo)
@@ -1480,18 +1497,8 @@ function lib:win(name, ...)
 
 	function window:exit()
 		titleBreath:Cancel()
+		window.frame:Destroy();
 		lib:closetasks(window.links);
-		windowframe:Destroy();
-
-		local windows = lib['BROWEN😂😂']
-		local index = table.find(windows, window)
-		if index then
-			table.remove(windows, index)
-		end
-		if #windows == 0 then
-			lib:closePopups()
-
-		end
 	end
 
 	function window:update(...)
@@ -1540,7 +1547,6 @@ function lib:win(name, ...)
 		function tab:toggle(b : boolean)
 			if (b == nil or typeof(b) ~= 'boolean') then b = not tab.active end
 			if b then
-				lib:closePopups()
 				for _, t in next, window.tabs do
 					if t ~= tab then
 						t:toggle(false)
@@ -1584,10 +1590,10 @@ function lib:win(name, ...)
 			new("UIPadding", { Parent = groupcontent; PaddingBottom =UDim.new(0, 10); PaddingLeft =UDim.new(0, 26); PaddingRight =UDim.new(0, 30); PaddingTop =UDim.new(0, 12); }) 
 
 			function group:toggle(b : boolean)
-				if (b == nil or typeof(b) ~= 'boolean') then b = not group.active end
+				if (b == nil or typeof(b) ~= 'boolean') then b = not tab.active end
 
-				group.active = b;
-				groupframe.Visible = group.active;
+				tab.active = b;
+				groupframe.Visible = tab.active;
 			end
 
 			function group:remove()
@@ -1598,36 +1604,28 @@ function lib:win(name, ...)
 
 			group.doomdtw_is_so_cute = groupcontent
 			setmetatable(group, lib.elements);
-			table.insert(tab.groups, group);
+			table.insert(group, tab.groups);
 			return group
 		end
 
 		if #window.tabs == 0 then tab:toggle(true); else tab:toggle(false) end
 		table.insert(window.tabs, tab)
 		if window.settingsTabButton then window.settingsTabButton.LayoutOrder = #window.tabs + 1 end
-		-- Activated passes (input, clickCount), which toggle() read as "flip", so clicking the
-		-- open tab used to blank the page. A tab button only ever opens its tab.
-		tabbutton.Activated:Connect(function()
-			tab:toggle(true)
-		end);
+		tabbutton.Activated:Connect(tab['toggle']);
 		return tab
 	end
 
 	local settingsTab = window:tab("Settings")
 	local settingsGroup = settingsTab:group("Configuration", {side = "left"})
-	local configName = new("TextBox", {Parent = settingsGroup.doomdtw_is_so_cute; BackgroundColor3 = Color3.fromRGB(18, 18, 18); BorderColor3 = Color3.fromRGB(28, 28, 28); ClearTextOnFocus = false; Font = Enum.Font.Code; PlaceholderText = "Config name"; PlaceholderColor3 = Color3.fromRGB(90, 90, 90); Size = UDim2.new(1, 0, 0, 22); Text = ""; TextColor3 = lib.theme.t2; TextSize = 13;})
+	local configName = new("TextBox", {Parent = settingsGroup.doomdtw_is_so_cute; BackgroundColor3 = Color3.fromRGB(18, 18, 18); BorderColor3 = Color3.fromRGB(28, 28, 28); ClearTextOnFocus = false; Font = Enum.Font.Code; PlaceholderText = "Config name"; Size = UDim2.new(1, 0, 0, 22); Text = "Config Name"; TextColor3 = lib.theme.t2; TextSize = 13;})
 	local configList = new("TextLabel", {Parent = settingsGroup.doomdtw_is_so_cute; BackgroundTransparency = 1; Font = Enum.Font.Code; Size = UDim2.new(1, 0, 0, 30); Text = "Saved: none"; TextColor3 = lib.theme.t2; TextSize = 11; TextWrapped = true; TextXAlignment = Enum.TextXAlignment.Left;})
 	local autoLoadLabel = new("TextLabel", {Parent = settingsGroup.doomdtw_is_so_cute; BackgroundTransparency = 1; Font = Enum.Font.Code; Size = UDim2.new(1, 0, 0, 18); Text = "Auto Load: none"; TextColor3 = lib.theme.t2; TextSize = 11; TextXAlignment = Enum.TextXAlignment.Left;})
 	local function refreshConfigList()
 		local configs = lib:listConfigs()
 		configList.Text = #configs > 0 and "Saved: " .. table.concat(configs, ", ") or "Saved: none"
 	end
-	-- Empty box = the default "Inertia" config; the notifications show the name actually used.
-	local function currentName()
-		return lib:configName(configName.Text)
-	end
 	settingsGroup:butt({text = "Save Config"; call = function()
-		local name = currentName()
+		local name = configName.Text
 		if lib:saveConfig(name) then
 			refreshConfigList()
 			lib:notify("Config Saved", name)
@@ -1636,7 +1634,7 @@ function lib:win(name, ...)
 		end
 	end;})
 	settingsGroup:butt({text = "Load Config"; call = function()
-		local name = currentName()
+		local name = configName.Text
 		if lib:loadConfig(name) then
 			lib:notify("Config Loaded", name)
 		else
@@ -1644,22 +1642,12 @@ function lib:win(name, ...)
 		end
 	end;})
 	settingsGroup:butt({text = "Set Auto Load"; call = function()
-		local name = currentName()
-		if not lib:configExists(name) then
-			lib:notify("Config Error", "Save " .. name .. " first")
-		elseif lib:setAutoLoadConfig(name) then
+		local name = configName.Text
+		if lib:setAutoLoadConfig(name) then
 			autoLoadLabel.Text = "Auto Load: " .. name
 			lib:notify("Auto Load Set", name)
 		else
 			lib:notify("Config Error", "Could not set auto load")
-		end
-	end;})
-	settingsGroup:butt({text = "Clear Auto Load"; call = function()
-		if lib:clearAutoLoadConfig() then
-			autoLoadLabel.Text = "Auto Load: none"
-			lib:notify("Auto Load Cleared", "Nothing loads on start")
-		else
-			lib:notify("Config Error", "Could not clear auto load")
 		end
 	end;})
 	settingsGroup:butt({text = "Reset Config"; call = function()
@@ -1669,11 +1657,10 @@ function lib:win(name, ...)
 	refreshConfigList()
 	local savedAutoLoad = lib:getAutoLoadConfig()
 	if savedAutoLoad then autoLoadLabel.Text = "Auto Load: " .. savedAutoLoad end
-	if window.autoload ~= false then
-		task.delay(0.25, function()
-			lib:loadAutoloadConfig()
-		end)
-	end
+	task.delay(0.25, function()
+		local autoLoadConfig = lib:getAutoLoadConfig()
+		if autoLoadConfig then lib:loadConfig(autoLoadConfig) end
+	end)
 
 	window.i = windowframe
 	table.insert(lib['BROWEN😂😂'], window)
