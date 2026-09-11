@@ -389,11 +389,11 @@ function lib:unload()
 		return
 	end
 
-	self:setCustomCursorEnabled(false)
+
 	self.unloaded = true
 	self.visible = false
 
-	pcall(RunService.UnbindFromRenderStep, RunService, CURSOR_BIND)
+
 	self:closetasks(self.connections)
 	self:closetasks(self.overlayLinks)
 	for _, window in next, self['BROWEN😂😂'] do
@@ -549,7 +549,7 @@ function lib:setVisible(visible: boolean?)
 			end
 		end
 	end
-	lib:setCustomCursorEnabled(lib.visible)
+
 	return lib.visible
 end
 
@@ -1490,7 +1490,7 @@ function lib:win(name, ...)
 		end
 		if #windows == 0 then
 			lib:closePopups()
-			lib:setCustomCursorEnabled(false)
+
 		end
 	end
 
