@@ -478,7 +478,8 @@ function lib:_registerKeybind(data, label, defaultKey)
 	})
 	table.insert(lib.overlays.keybindItems, {data = data; item = item; label = label;})
 	local function refresh()
-		item.Text = string.format("%s  [%s]", label, tostring(data.val or '?'))
+		local mode = data.mode ~= 'Click' and data.mode and ('  ' .. string.lower(data.mode)) or ''
+		item.Text = string.format("%s  [%s]%s", label, tostring(data.val or '?'), mode)
 		item.TextColor3 = data.active and lib.theme.accent or lib.theme.t2
 	end
 	data._refreshKeybind = refresh
@@ -582,6 +583,7 @@ function lib.subelements:addkiki(...)
 		val = nil;
 
 		changed = function() end;
+		modechanged = function() end;
 		call = function() end;
 		active = false;
 	}, ... or {})
@@ -635,11 +637,76 @@ function lib.subelements:addkiki(...)
 		end
 
 		ButtonLabel.Text = gsub(eeeee)
-		ElementData.val = gsub(eeeee) 
+		ElementData.val = gsub(eeeee)
 		lib:setFlag(getFlagName(ElementData), ElementData.val)
 		if ElementData._refreshKeybind then
 			ElementData._refreshKeybind()
 		end
+	end
+
+	local modeFlag = getFlagName(ElementData) and (getFlagName(ElementData) .. '_mode') or nil
+	local modeList = ElementData.modes or (ElementData.mode ~= 'Click' and {'Always'; 'Toggle'; 'Hold';} or nil)
+	local modeMenu, modeButtons = nil, {}
+
+	function ElementData:SetMode(mode : string)
+		if mode ~= 'Always' and mode ~= 'Toggle' and mode ~= 'Hold' and mode ~= 'Click' then
+			return
+		end
+
+		ElementData.mode = mode
+		ElementData.pressed = mode == 'Always'
+		ElementData.active = mode == 'Always'
+		if modeList and modeFlag then
+			lib:setFlag(modeFlag, mode)
+		end
+
+		for option, button in next, modeButtons do
+			button.TextColor3 = option == mode and lib.theme.accent or lib.theme.t2
+		end
+
+		if ElementData._refreshKeybind then
+			ElementData._refreshKeybind()
+		end
+
+		if not lib.loadingConfig then
+			local _, CallFailure = pcall(ElementData.modechanged, mode)
+			if CallFailure then warn(CallFailure) end
+		end
+	end
+
+	if modeList then
+		modeMenu = new("Frame", { Parent = lib.ui; Name = "KeybindModes"; Visible = false; AutomaticSize = Enum.AutomaticSize.Y; BackgroundColor3 = Color3.fromRGB(18, 18, 18); BorderColor3 = Color3.fromRGB(0, 0, 0); BorderSizePixel = 0; Size = UDim2.fromOffset(70, 0); ZIndex = 120; }) :: Frame
+		new("UIStroke", { Parent = modeMenu; ApplyStrokeMode = Enum.ApplyStrokeMode.Border; })
+		new("UIListLayout", { Parent = modeMenu; Padding = UDim.new(0, 1); SortOrder = Enum.SortOrder.LayoutOrder; })
+
+		for index, option in next, modeList do
+			local button = new("TextButton", { Parent = modeMenu; LayoutOrder = index; AutoButtonColor = false; BackgroundTransparency = 1; BorderSizePixel = 0; FontFace = Font.new("rbxasset://fonts/families/SourceSansPro.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal); Size = UDim2.new(1, 0, 0, 16); Text = option; TextColor3 = lib.theme.t2; TextSize = 14; TextXAlignment = Enum.TextXAlignment.Left; ZIndex = 121; }) :: TextButton
+			new("UIPadding", { Parent = button; PaddingLeft = UDim.new(0, 4); })
+			modeButtons[option] = button
+
+			button.Activated:Connect(function()
+				ElementData:SetMode(option)
+				modeMenu.Visible = false
+			end)
+		end
+
+		ElementButton.MouseButton2Click:Connect(function()
+			modeMenu.Position = UDim2.fromOffset(ElementButton.AbsolutePosition.X, ElementButton.AbsolutePosition.Y + ElementButton.AbsoluteSize.Y + 2)
+			modeMenu.Visible = not modeMenu.Visible
+		end)
+
+		game:GetService('UserInputService').InputBegan:Connect(function(Input)
+			if not modeMenu.Visible or Input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+				return
+			end
+
+			local position, size = modeMenu.AbsolutePosition, modeMenu.AbsoluteSize
+			local inside = Mouse.X >= position.X and Mouse.X <= position.X + size.X
+				and Mouse.Y >= position.Y and Mouse.Y <= position.Y + size.Y
+			if not inside then
+				modeMenu.Visible = false
+			end
+		end)
 	end
 
 	ElementButton.Activated:Connect(function()
@@ -664,7 +731,7 @@ function lib.subelements:addkiki(...)
 				ElementData.active = true
 				if ElementData._refreshKeybind then ElementData._refreshKeybind() end
 
-				while ElementData.pressed do task.wait()
+				while ElementData.pressed and ElementData.mode == 'Hold' do task.wait()
 					local _, CallFailure = pcall(function()
 						ElementData.call(ElementData.val)
 					end)
@@ -709,6 +776,12 @@ function lib.subelements:addkiki(...)
 	ElementData:Set(ElementData.val)
 	lib:_registerKeybind(ElementData, ElementData.text, ElementData.val)
 	registerFlag(ElementData, function(value) ElementData:Set(value) end)
+
+	ElementData:SetMode(ElementData.mode)
+	if modeList and modeFlag then
+		lib.defaults[modeFlag] = ElementData.mode
+		lib.flagControls[modeFlag] = function(value) ElementData:SetMode(value) end
+	end
 end
 
 function lib.subelements:addtscolor(...)
