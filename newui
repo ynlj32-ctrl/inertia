@@ -1473,7 +1473,7 @@ lib:watermark("Inertia")
 lib:keybindlist(true)
 
 -- Set this to false when using the module without the demo window.
-local RUN_EXAMPLE = true
+local RUN_EXAMPLE = false
 
 if RUN_EXAMPLE then
 	local example = lib:win("Example", {
