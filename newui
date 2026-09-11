@@ -224,7 +224,7 @@ function lib:watermark(text: string?, position: UDim2?)
 		Name = "Text";
 		Position = UDim2.fromOffset(10, 0);
 		Size = UDim2.new(1, -16, 1, 0);
-		Text = text or "discord.gg/robloxis";
+		Text = text or "Inertia";
 		TextColor3 = lib.theme.t;
 		TextXAlignment = Enum.TextXAlignment.Left;
 		ZIndex = 101;
@@ -245,7 +245,7 @@ function lib:watermark(text: string?, position: UDim2?)
 			pcall(function()
 				ping = math.floor(stats.Network.ServerStatsItem["Data Ping"]:GetValue() + 0.5)
 			end)
-			status.Text = string.format("%s  |  %d FPS  |  %d ms", text or "discord.gg/robloxis", fps, ping)
+			status.Text = string.format("%s  |  %d FPS  |  %d ms", text or "Inertia", fps, ping)
 		end
 		local pulse = (math.sin(now * 2.5) + 1) * 0.5
 		accent.BackgroundTransparency = 0.15 + pulse * 0.35
@@ -1303,7 +1303,7 @@ function lib:win(name, ...)
 	return window
 end
 
-lib:watermark("discord.gg/robloxis")
+lib:watermark("Inertia")
 lib:keybindlist(true)
 
 -- Set this to false when using the module without the demo window.
@@ -1311,7 +1311,7 @@ local RUN_EXAMPLE = false
 
 if RUN_EXAMPLE then
 	local example = lib:win("Example", {
-		title = "Linoria-style Example";
+		title = "Inertia";
 		logo = "";
 		logoBase64 = "";
 		fallbackLogo = "";
