@@ -1,0 +1,628 @@
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local function GetCamera()
+	return workspace.CurrentCamera
+end
+local Character = LocalPlayer.Character
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local FirearmLocal = getsenv(Character:WaitForChild("FirearmLocal"))
+local Weapon_Module = require(ReplicatedStorage:WaitForChild("Weapon_Module"))
+local ViewmodelHandler = require(ReplicatedStorage:WaitForChild("ViewmodelHandler"))
+local HttpService = game:GetService("HttpService")
+
+local CONFIG_FOLDER = "Inertia"
+local CONFIG_FILE = "Inertia/HoodRivals.json"
+local SCRIPT_FILE = "Inertia/HoodRivals.luau"
+
+local Config = {
+	AimbotEnabled = false,
+	AimbotMode = "Silent",
+	NoSpread = false,
+	NoRecoil = false,
+	ShowFOV = false,
+	FOVRadius = 300,
+	HitPart = "Head",
+	TeamCheck = false,
+	VisibleCheck = false,
+	FOVColor = Color3.fromRGB(255, 255, 255),
+	Smoothing = 5,
+	ESPBox = false,
+	ESPBoxColor = Color3.fromRGB(255, 255, 255),
+	ESPName = false,
+	ESPNameColor = Color3.fromRGB(255, 255, 255),
+	ESPWeapon = false,
+	ESPWeaponColor = Color3.fromRGB(200, 200, 200),
+	ESPHealthBar = false,
+	SkinChanger = false,
+	SelectedSkin = "Default",
+}
+
+local function SaveConfig()
+	local save = {}
+	for k, v in pairs(Config) do
+		if typeof(v) == "Color3" then
+			save[k] = {R = math.floor(v.R * 255), G = math.floor(v.G * 255), B = math.floor(v.B * 255)}
+		else
+			save[k] = v
+		end
+	end
+	if not isfolder(CONFIG_FOLDER) then makefolder(CONFIG_FOLDER) end
+	writefile(CONFIG_FILE, HttpService:JSONEncode(save))
+end
+
+local function LoadConfig()
+	if not isfile(CONFIG_FILE) then return end
+	local ok, data = pcall(function()
+		return HttpService:JSONDecode(readfile(CONFIG_FILE))
+	end)
+	if not ok or type(data) ~= "table" then return end
+	for k, v in pairs(data) do
+		if Config[k] ~= nil then
+			if type(v) == "table" and v.R and v.G and v.B then
+				Config[k] = Color3.fromRGB(v.R, v.G, v.B)
+			else
+				Config[k] = v
+			end
+		end
+	end
+end
+
+LoadConfig()
+
+-- Skin Data
+
+local SkinData = {
+	Chameleon = {Type = "Decal", AssetId = "rbxassetid://196137601", Color3 = Color3.fromRGB(255, 255, 255)},
+	Beachwave = {Type = "Decal", AssetId = "rbxassetid://365539192", Color3 = Color3.fromRGB(255, 255, 255)},
+	Fuzz = {Type = "Decal", AssetId = "rbxassetid://1206686982", Color3 = Color3.fromRGB(255, 255, 255)},
+	Marble = {Type = "Decal", AssetId = "rbxassetid://1344724754", Color3 = Color3.fromRGB(255, 255, 255)},
+	Skyline = {Type = "Decal", AssetId = "rbxassetid://5628239366", Color3 = Color3.fromRGB(255, 255, 255)},
+	Signal = {Type = "Decal", AssetId = "rbxassetid://85236209398341", Color3 = Color3.fromRGB(255, 255, 255)},
+	Forcefield = {Type = "Material", AssetId = Enum.Material.ForceField, Color3 = Color3.fromRGB(177, 167, 255)},
+	Seethrough = {Type = "Material", AssetId = Enum.Material.Glass, Color3 = Color3.fromRGB(116, 134, 157), Transparency = 0.5, Highlight = {OutlineTransparency = 0.5, OutlineColor = Color3.fromRGB(190, 216, 255)}},
+	SolidGold = {Type = "Material", AssetId = Enum.Material.SmoothPlastic, Color3 = Color3.fromRGB(239, 184, 56), Reflectance = 0.4},
+	RedCrystal = {Type = "Material", AssetId = Enum.Material.SmoothPlastic, Color3 = Color3.fromRGB(255, 0, 0), Reflectance = 0.4},
+	PurpleOpal = {Type = "Material", AssetId = Enum.Material.SmoothPlastic, Color3 = Color3.fromRGB(98, 37, 209), Reflectance = 0.4, Transparency = 0.2},
+	Kasper = {Type = "Material", AssetId = Enum.Material.Neon, Color3 = Color3.fromRGB(255, 255, 255), Reflectance = 0.5, Transparency = 0.5},
+	Nebula = {Type = "MovingTexture", Speed = 0.02, AssetId = "rbxassetid://107106729063887", Color3 = Color3.fromRGB(255, 255, 255), Highlight = {OutlineTransparency = 0, OutlineColor = Color3.fromRGB(72, 0, 255)}},
+	GalacticIce = {Type = "ShakingTexture", Speed = 0.02, AssetId = "rbxassetid://102830105169207", Color3 = Color3.fromRGB(255, 255, 255), Highlight = {OutlineTransparency = 0, OutlineColor = Color3.fromRGB(0, 145, 255)}},
+	Cosmos = {Type = "MovingTexture", Speed = 0.02, AssetId = "rbxassetid://71879634066370", Color3 = Color3.fromRGB(255, 255, 255), Highlight = {OutlineTransparency = 0, OutlineColor = Color3.fromRGB(234, 129, 255)}},
+	GlowingLava = {Type = "MovingTexture", Speed = 0.02, AssetId = "rbxassetid://115862861053704", Color3 = Color3.fromRGB(255, 255, 255), Highlight = {OutlineTransparency = 0, OutlineColor = Color3.fromRGB(255, 119, 0)}},
+	Void = {Type = "PulsatingTexture", Speed = 0.02, AssetId = "rbxassetid://85363032307164", Color3 = Color3.fromRGB(255, 255, 255), Highlight = {OutlineTransparency = 0, OutlineColor = Color3.fromRGB(54, 0, 135)}},
+	Storm = {Type = "GIFTexture", Speed = 0.02, StudsPerTileU = 1, StudsPerTileV = 0.5, AssetId = {"rbxassetid://91556854113367", "rbxassetid://138069412093048", "rbxassetid://82469937086158", "rbxassetid://94021041273127", "rbxassetid://122127529892251", "rbxassetid://122303065976419", "rbxassetid://130617133520387", "rbxassetid://112243815809155", "rbxassetid://127992049959612", "rbxassetid://121099697944439", "rbxassetid://105227735806926", "rbxassetid://139960034700552", "rbxassetid://135062827270419", "rbxassetid://103153083571449", "rbxassetid://126047819419980", "rbxassetid://121353410837687", "rbxassetid://117632014840450", "rbxassetid://83302119856837", "rbxassetid://102668921188167", "rbxassetid://91833520572722", "rbxassetid://86632378962338"}, Color3 = Color3.fromRGB(255, 255, 255), Highlight = {OutlineTransparency = 0, OutlineColor = Color3.fromRGB(72, 0, 255)}},
+	Matrix = {Type = "GIFTexture", Speed = 0.02, AssetId = {"rbxassetid://88334106517934", "rbxassetid://122943928964915", "rbxassetid://100885819338689", "rbxassetid://133958872135582", "rbxassetid://120124278777449", "rbxassetid://101404889337398", "rbxassetid://77746108706172", "rbxassetid://90842203200674", "rbxassetid://88334106517934", "rbxassetid://97867655117898"}, Color3 = Color3.fromRGB(255, 255, 255), Highlight = {OutlineTransparency = 0, OutlineColor = Color3.fromRGB(0, 129, 9)}},
+	Static = {Type = "GIFTexture", Speed = 0.02, AssetId = {"rbxassetid://87325075195141", "rbxassetid://130606871459589", "rbxassetid://112969286084047"}, Color3 = Color3.fromRGB(255, 255, 255), Highlight = {OutlineTransparency = 0, OutlineColor = Color3.fromRGB(154, 154, 154)}},
+	GlitchVHS = {Type = "GIFTexture", Speed = 0.02, StudsPerTileU = 1, StudsPerTileV = 0.5, AssetId = {"rbxassetid://97450927684785", "rbxassetid://133628550279424", "rbxassetid://108470630300391", "rbxassetid://98905411192891", "rbxassetid://76130823919572", "rbxassetid://138930796848975", "rbxassetid://139836348447021", "rbxassetid://75180028003830", "rbxassetid://76087984614292", "rbxassetid://126246911982291"}, Color3 = Color3.fromRGB(255, 255, 255), Highlight = {OutlineTransparency = 0, OutlineColor = Color3.fromRGB(199, 205, 255)}},
+}
+
+local SkinNames = {}
+for name in pairs(SkinData) do table.insert(SkinNames, name) end
+table.sort(SkinNames)
+table.insert(SkinNames, 1, "Default")
+
+local OriginalParts = {}
+
+local function ClearSkinModel(model)
+	for _, desc in model:GetDescendants() do
+		if desc.Name == "_SKIN_" then desc:Destroy() end
+	end
+	local h = model:FindFirstChildOfClass("Highlight")
+	if h then h:Destroy() end
+	for part, orig in pairs(OriginalParts) do
+		if part:IsDescendantOf(model) and part.Parent then
+			part.Material = orig.Material
+			part.Color = orig.Color
+			part.Reflectance = orig.Reflectance
+			part.Transparency = orig.Transparency
+			if part:IsA("MeshPart") then part.TextureID = orig.TextureID end
+			OriginalParts[part] = nil
+		end
+	end
+end
+
+local function AnimateSkin(data, tool)
+	task.spawn(function()
+		local textures = {}
+		for _, desc in tool:GetDescendants() do
+			if desc.Name == "_SKIN_" and desc:IsA("Texture") then
+				table.insert(textures, desc)
+			end
+		end
+		if #textures == 0 then return end
+
+		local t = 0
+		local frame = 1
+
+		while tool.Parent and Config.SkinChanger do
+			for i = #textures, 1, -1 do
+				if not textures[i].Parent then table.remove(textures, i) end
+			end
+			if #textures == 0 then return end
+
+			if data.Type == "MovingTexture" then
+				for _, tex in textures do tex.OffsetStudsV = tex.OffsetStudsV + data.Speed end
+			elseif data.Type == "ShakingTexture" then
+				for _, tex in textures do
+					tex.OffsetStudsU = (math.random() - 0.5) * data.Speed * 2
+					tex.OffsetStudsV = (math.random() - 0.5) * data.Speed * 2
+				end
+			elseif data.Type == "PulsatingTexture" then
+				t = t + 0.05
+				for _, tex in textures do tex.Rotation = (tex.Rotation + 0.25) % 360 end
+			elseif data.Type == "GIFTexture" then
+				t = t + 0.05
+				if data.Speed <= t then
+					frame = frame + 1
+					if frame > #data.AssetId then frame = 1 end
+					t = 0
+					for _, tex in textures do tex.Texture = data.AssetId[frame] end
+				end
+			end
+
+			task.wait(0.05)
+		end
+	end)
+end
+
+local function SkinModel(model, data)
+	for _, part in model:GetDescendants() do
+		if part:IsA("BasePart") and part.Transparency < 0.5 then
+			if data.Type == "Material" then
+				OriginalParts[part] = {
+					Material = part.Material,
+					Color = part.Color,
+					Reflectance = part.Reflectance,
+					Transparency = part.Transparency,
+					TextureID = part:IsA("MeshPart") and part.TextureID or nil,
+				}
+				if part:IsA("MeshPart") then part.TextureID = "" end
+				part.Material = data.AssetId
+				part.Reflectance = data.Reflectance or 0
+				part.Transparency = data.Transparency or 0
+				part.Color = data.Color3
+			else
+				local className = data.Type == "Decal" and "Decal" or "Texture"
+				for _, face in Enum.NormalId:GetEnumItems() do
+					local obj = Instance.new(className)
+					obj.Face = face
+					obj.Texture = type(data.AssetId) == "table" and data.AssetId[1] or data.AssetId
+					obj.Color3 = data.Color3
+					obj.Name = "_SKIN_"
+					if className == "Texture" then
+						obj.StudsPerTileU = data.StudsPerTileU or 1
+						obj.StudsPerTileV = data.StudsPerTileV or 1
+					end
+					obj.Parent = part
+				end
+			end
+		end
+	end
+
+	if data.Highlight then
+		local h = Instance.new("Highlight")
+		h.FillTransparency = 1
+		h.DepthMode = Enum.HighlightDepthMode.Occluded
+		h.OutlineColor = data.Highlight.OutlineColor
+		h.OutlineTransparency = data.Highlight.OutlineTransparency
+		h.Parent = model
+	end
+
+	if data.Type == "MovingTexture" or data.Type == "ShakingTexture" or data.Type == "PulsatingTexture" or data.Type == "GIFTexture" then
+		AnimateSkin(data, model)
+	end
+end
+
+local function GetViewmodel(tool)
+	local ok, gun = pcall(function()
+		return ViewmodelHandler:GetVisualGun(tool)
+	end)
+	if ok and gun and gun ~= tool then return gun end
+	return nil
+end
+
+local function ApplySkin()
+	if not Character then return end
+	local tool = Character:FindFirstChildOfClass("Tool")
+	if not tool then return end
+
+	ClearSkinModel(tool)
+	local viewmodel = GetViewmodel(tool)
+	if viewmodel then ClearSkinModel(viewmodel) end
+
+	if not Config.SkinChanger or Config.SelectedSkin == "Default" then return end
+
+	local data = SkinData[Config.SelectedSkin]
+	if not data then return end
+
+	SkinModel(tool, data)
+	if viewmodel then SkinModel(viewmodel, data) end
+end
+
+-- UI
+
+local Library = loadstring(game:HttpGet(
+	"https://raw.githubusercontent.com/xHeptc/Kavo-UI-Library/main/source.lua"
+))()
+
+local Window = Library.CreateLib("Inertia - Hood Rivals", "DarkTheme")
+
+local AimbotTab = Window:NewTab("Combat")
+local AimbotSection = AimbotTab:NewSection("Combat")
+
+AimbotSection:NewToggle("Enabled", "Toggle aimbot on/off", function(state)
+	Config.AimbotEnabled = state
+end)
+
+AimbotSection:NewDropdown("Mode", "Silent or Camera", {"Silent", "Camera"}, function(value)
+	Config.AimbotMode = value
+end)
+
+AimbotSection:NewSlider("FOV Radius", "Target search radius", 800, 50, function(value)
+	Config.FOVRadius = value
+end)
+
+AimbotSection:NewSlider("Smoothing", "Lower = faster snap (Camera)", 20, 1, function(value)
+	Config.Smoothing = value
+end)
+
+AimbotSection:NewDropdown("Hit Part", "Which body part to target", {"Head", "HumanoidRootPart", "UpperTorso"}, function(value)
+	Config.HitPart = value
+end)
+
+AimbotSection:NewToggle("Team Check", "Only target enemies", function(state)
+	Config.TeamCheck = state
+end)
+
+AimbotSection:NewToggle("Visible Check", "Only target visible players", function(state)
+	Config.VisibleCheck = state
+end)
+
+AimbotSection:NewToggle("Show FOV Circle", "Display FOV circle on screen", function(state)
+	Config.ShowFOV = state
+end)
+
+AimbotSection:NewColorPicker("FOV Color", "Circle color", Config.FOVColor, function(color)
+	Config.FOVColor = color
+end)
+
+local WeaponTab = Window:NewTab("Gun Mods")
+local WeaponSection = WeaponTab:NewSection("Gun Mods")
+
+WeaponSection:NewToggle("No Spread", "Removes bullet spread", function(state)
+	Config.NoSpread = state
+end)
+
+WeaponSection:NewToggle("No Recoil", "Removes camera recoil", function(state)
+	Config.NoRecoil = state
+end)
+
+local ESPTab = Window:NewTab("Visuals")
+local ESPSection = ESPTab:NewSection("Visuals")
+
+ESPSection:NewToggle("Box", "2D box around players", function(state)
+	Config.ESPBox = state
+end)
+
+ESPSection:NewColorPicker("Box Color", "Box outline color", Config.ESPBoxColor, function(color)
+	Config.ESPBoxColor = color
+end)
+
+ESPSection:NewToggle("Name", "Show player names", function(state)
+	Config.ESPName = state
+end)
+
+ESPSection:NewColorPicker("Name Color", "Name text color", Config.ESPNameColor, function(color)
+	Config.ESPNameColor = color
+end)
+
+ESPSection:NewToggle("Weapon", "Show equipped weapon", function(state)
+	Config.ESPWeapon = state
+end)
+
+ESPSection:NewColorPicker("Weapon Color", "Weapon text color", Config.ESPWeaponColor, function(color)
+	Config.ESPWeaponColor = color
+end)
+
+ESPSection:NewToggle("Health Bar", "Vertical health bar", function(state)
+	Config.ESPHealthBar = state
+end)
+
+local SkinsTab = Window:NewTab("Skins")
+local SkinsSection = SkinsTab:NewSection("Skin Changer")
+
+SkinsSection:NewToggle("Enabled", "Apply custom skin to weapon", function(state)
+	Config.SkinChanger = state
+	ApplySkin()
+end)
+
+SkinsSection:NewDropdown("Skin", "Select weapon skin", SkinNames, function(value)
+	Config.SelectedSkin = value
+	if Config.SkinChanger then ApplySkin() end
+end)
+
+local SettingsTab = Window:NewTab("Settings")
+local SettingsSection = SettingsTab:NewSection("UI")
+
+SettingsSection:NewKeybind("Toggle UI", "Show/hide menu", Enum.KeyCode.RightControl, function()
+	Library:ToggleUI()
+end)
+
+SettingsSection:NewButton("Save Config", "Save settings to file", function()
+	SaveConfig()
+end)
+
+SettingsSection:NewButton("Load Config", "Load settings from file", function()
+	LoadConfig()
+end)
+
+-- FOV Circle
+
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Visible = true
+FOVCircle.Radius = Config.FOVRadius
+FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+FOVCircle.Thickness = 1
+FOVCircle.Filled = false
+FOVCircle.NumSides = 24
+FOVCircle.ZIndex = 2
+
+local FOVCircleOutline = Drawing.new("Circle")
+FOVCircleOutline.Visible = true
+FOVCircleOutline.Radius = Config.FOVRadius
+FOVCircleOutline.Color = Color3.fromRGB(0, 0, 0)
+FOVCircleOutline.Thickness = 1.5
+FOVCircleOutline.Filled = false
+FOVCircleOutline.NumSides = 24
+FOVCircleOutline.ZIndex = 1
+
+-- Target Finder
+
+local RayParams = RaycastParams.new()
+RayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function GetTarget(origin)
+	local Mouse = UserInputService:GetMouseLocation()
+
+	local bestDistance = math.huge
+	local bestDirection = nil
+	local bestPosition = nil
+
+	for _, player in Players:GetPlayers() do
+		if player == LocalPlayer then continue end
+		if Config.TeamCheck and player.Team == LocalPlayer.Team then continue end
+
+		local character = player.Character
+		if not character then continue end
+
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if not humanoid or humanoid.Health <= 0 then continue end
+
+		local part = character:FindFirstChild(Config.HitPart) or character:FindFirstChild("Head")
+		if not part then continue end
+
+		local screenPos, onScreen = GetCamera():WorldToViewportPoint(part.Position)
+		if not onScreen then continue end
+
+		if Config.VisibleCheck then
+			RayParams.FilterDescendantsInstances = {LocalPlayer.Character}
+			local ray = workspace:Raycast(origin, part.Position - origin, RayParams)
+			if ray and not ray.Instance:IsDescendantOf(character) then continue end
+		end
+
+		local screenVec = Vector2.new(screenPos.X, screenPos.Y)
+		local dist = (screenVec - Mouse).Magnitude
+		if dist <= Config.FOVRadius and dist < bestDistance then
+			bestDistance = dist
+			bestDirection = (part.Position - origin).Unit
+			bestPosition = part.Position
+		end
+	end
+
+	return bestDirection, bestPosition
+end
+
+-- Hooks
+
+local oldRecoil = Weapon_Module.recoil
+Weapon_Module.recoil = function(...)
+	if Config.NoRecoil then return end
+	return oldRecoil(...)
+end
+
+local function UpdateHooks()
+	local originalAim = FirearmLocal.GetAimDirection
+	FirearmLocal.GetAimDirection = function(...)
+		if Config.NoSpread then
+			return originalAim(0)
+		end
+		return originalAim(...)
+	end
+
+	local originalDir = FirearmLocal.GetDirection
+	FirearmLocal.GetDirection = function(...)
+		local direction, origin = originalDir(...)
+
+		if Config.AimbotEnabled and Config.AimbotMode == "Silent" then
+			local newDirection = GetTarget(origin)
+			if newDirection then
+				direction = newDirection
+			end
+		end
+
+		return direction, origin
+	end
+end
+
+UpdateHooks()
+
+-- ESP
+
+local Paint = DrawingImmediate.GetPaint(1)
+
+Paint:Connect(function()
+	if not (Config.ESPBox or Config.ESPName or Config.ESPWeapon or Config.ESPHealthBar) then return end
+
+	local camera = GetCamera()
+
+	for _, player in Players:GetPlayers() do
+		if player == LocalPlayer then continue end
+		if Config.TeamCheck and player.Team == LocalPlayer.Team then continue end
+
+		local character = player.Character
+		if not character then continue end
+
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if not humanoid or humanoid.Health <= 0 then continue end
+
+		local cf, bSize = character:GetBoundingBox()
+		local half = bSize / 2
+
+		local minX, minY = math.huge, math.huge
+		local maxX, maxY = -math.huge, -math.huge
+		local visible = false
+
+		for _, offset in {
+			Vector3.new(half.X, half.Y, half.Z),
+			Vector3.new(-half.X, half.Y, half.Z),
+			Vector3.new(half.X, -half.Y, half.Z),
+			Vector3.new(-half.X, -half.Y, half.Z),
+			Vector3.new(half.X, half.Y, -half.Z),
+			Vector3.new(-half.X, half.Y, -half.Z),
+			Vector3.new(half.X, -half.Y, -half.Z),
+			Vector3.new(-half.X, -half.Y, -half.Z),
+		} do
+			local sp, onScreen = camera:WorldToViewportPoint((cf * CFrame.new(offset)).Position)
+			if onScreen then
+				visible = true
+				if sp.X < minX then minX = sp.X end
+				if sp.X > maxX then maxX = sp.X end
+				if sp.Y < minY then minY = sp.Y end
+				if sp.Y > maxY then maxY = sp.Y end
+			end
+		end
+
+		if not visible then continue end
+
+		local topLeft = Vector2.new(minX, minY)
+		local size = Vector2.new(maxX - minX, maxY - minY)
+		local centerX = (minX + maxX) / 2
+
+		if Config.ESPBox then
+			DrawingImmediate.Rectangle(
+				Vector2.new(topLeft.X - 1, topLeft.Y - 1),
+				Vector2.new(size.X + 2, size.Y + 2),
+				Color3.new(0, 0, 0), 1, 0, 1
+			)
+			DrawingImmediate.Rectangle(
+				Vector2.new(topLeft.X + 1, topLeft.Y + 1),
+				Vector2.new(size.X - 2, size.Y - 2),
+				Color3.new(0, 0, 0), 1, 0, 1
+			)
+			DrawingImmediate.Rectangle(topLeft, size, Config.ESPBoxColor, 1, 0, 1)
+		end
+
+		if Config.ESPName then
+			DrawingImmediate.OutlinedText(
+				Vector2.new(centerX, minY - 16),
+				0, 13,
+				Config.ESPNameColor, 1,
+				Color3.new(0, 0, 0), 1,
+				player.DisplayName, true
+			)
+		end
+
+		if Config.ESPWeapon then
+			local tool = character:FindFirstChildOfClass("Tool")
+			local weaponName = tool and tool.Name or "None"
+			DrawingImmediate.OutlinedText(
+				Vector2.new(centerX, maxY + 2),
+				0, 13,
+				Config.ESPWeaponColor, 1,
+				Color3.new(0, 0, 0), 1,
+				weaponName, true
+			)
+		end
+
+		if Config.ESPHealthBar then
+			local healthFrac = humanoid.Health / humanoid.MaxHealth
+			local height = size.Y
+			local barWidth = 3
+			local barX = topLeft.X - barWidth - 2
+
+			DrawingImmediate.FilledRectangle(
+				Vector2.new(barX, minY),
+				Vector2.new(barWidth, height),
+				Color3.new(0, 0, 0), 0.5, 0
+			)
+
+			local fillHeight = height * healthFrac
+			local healthColor = Color3.fromRGB(255 * (1 - healthFrac), 255 * healthFrac, 0)
+			DrawingImmediate.FilledRectangle(
+				Vector2.new(barX, minY + (height - fillHeight)),
+				Vector2.new(barWidth, fillHeight),
+				healthColor, 1, 0
+			)
+
+			DrawingImmediate.Rectangle(
+				Vector2.new(barX, minY),
+				Vector2.new(barWidth, height),
+				Color3.new(0, 0, 0), 1, 0, 1
+			)
+		end
+
+	end
+end)
+
+-- Render Loop
+
+RunService.RenderStepped:Connect(function()
+	local mouse = UserInputService:GetMouseLocation()
+	FOVCircle.Visible = Config.ShowFOV
+	FOVCircle.Radius = Config.FOVRadius
+	FOVCircle.Color = Config.FOVColor
+	FOVCircle.Position = mouse
+	FOVCircleOutline.Visible = Config.ShowFOV
+	FOVCircleOutline.Radius = Config.FOVRadius
+	FOVCircleOutline.Position = mouse
+
+	if Config.AimbotEnabled and Config.AimbotMode == "Camera" and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+		local camera = GetCamera()
+		local _, targetPos = GetTarget(camera.CFrame.Position)
+		if targetPos then
+			local screenPos = camera:WorldToViewportPoint(targetPos)
+			local center = camera.ViewportSize / 2
+			local deltaX = (screenPos.X - center.X) / Config.Smoothing
+			local deltaY = (screenPos.Y - center.Y) / Config.Smoothing
+			mousemoverel(deltaX, deltaY)
+		end
+	end
+end)
+
+-- Respawn Handler
+
+local function WatchWeapons(char)
+	char.ChildAdded:Connect(function(child)
+		if child:IsA("Tool") and Config.SkinChanger then
+			task.wait(0.1)
+			ApplySkin()
+		end
+	end)
+end
+
+WatchWeapons(Character)
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+	Character = char
+	FirearmLocal = getsenv(char:WaitForChild("FirearmLocal"))
+	UpdateHooks()
+	WatchWeapons(char)
+end)
+
+-- Teleport Persistence
+
+if isfile(SCRIPT_FILE) then
+	queueonteleport(string.format("loadstring(readfile(%q))()", SCRIPT_FILE))
+end
