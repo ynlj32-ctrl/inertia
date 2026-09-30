@@ -2,75 +2,44 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
 local function GetCamera()
 	return workspace.CurrentCamera
 end
-local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 local FirearmLocal = getsenv(Character:WaitForChild("FirearmLocal"))
 local Weapon_Module = require(ReplicatedStorage:WaitForChild("Weapon_Module"))
 local ViewmodelHandler = require(ReplicatedStorage:WaitForChild("ViewmodelHandler"))
-local HttpService = game:GetService("HttpService")
 
 local CONFIG_FOLDER = "Inertia"
 local CONFIG_FILE = "Inertia/HoodRivals.json"
 local SCRIPT_FILE = "Inertia/HoodRivals.luau"
 
-local Config = {
-	AimbotEnabled = false,
-	AimbotMode = "Silent",
-	NoSpread = false,
-	NoRecoil = false,
-	ShowFOV = false,
-	FOVRadius = 300,
-	HitPart = "Head",
-	TeamCheck = false,
-	VisibleCheck = false,
-	FOVColor = Color3.fromRGB(255, 255, 255),
-	Smoothing = 5,
-	ESPBox = false,
-	ESPBoxColor = Color3.fromRGB(255, 255, 255),
-	ESPName = false,
-	ESPNameColor = Color3.fromRGB(255, 255, 255),
-	ESPWeapon = false,
-	ESPWeaponColor = Color3.fromRGB(200, 200, 200),
-	ESPHealthBar = false,
-	SkinChanger = false,
-	SelectedSkin = "Default",
-}
+-- Load saved config from file
 
-local function SaveConfig()
-	local save = {}
-	for k, v in pairs(Config) do
-		if typeof(v) == "Color3" then
-			save[k] = {R = math.floor(v.R * 255), G = math.floor(v.G * 255), B = math.floor(v.B * 255)}
-		else
-			save[k] = v
-		end
-	end
-	if not isfolder(CONFIG_FOLDER) then makefolder(CONFIG_FOLDER) end
-	writefile(CONFIG_FILE, HttpService:JSONEncode(save))
-end
-
-local function LoadConfig()
-	if not isfile(CONFIG_FILE) then return end
+local Saved = {}
+if isfile(CONFIG_FILE) then
 	local ok, data = pcall(function()
 		return HttpService:JSONDecode(readfile(CONFIG_FILE))
 	end)
-	if not ok or type(data) ~= "table" then return end
-	for k, v in pairs(data) do
-		if Config[k] ~= nil then
+	if ok and type(data) == "table" then
+		for k, v in pairs(data) do
 			if type(v) == "table" and v.R and v.G and v.B then
-				Config[k] = Color3.fromRGB(v.R, v.G, v.B)
+				Saved[k] = Color3.fromRGB(v.R, v.G, v.B)
 			else
-				Config[k] = v
+				Saved[k] = v
 			end
 		end
 	end
 end
 
-LoadConfig()
+local function D(key, default)
+	if Saved[key] ~= nil then return Saved[key] end
+	return default
+end
 
 -- Skin Data
 
@@ -102,6 +71,8 @@ local SkinNames = {}
 for name in pairs(SkinData) do table.insert(SkinNames, name) end
 table.sort(SkinNames)
 table.insert(SkinNames, 1, "Default")
+
+-- Skin Functions
 
 local OriginalParts = {}
 
@@ -136,7 +107,7 @@ local function AnimateSkin(data, tool)
 		local t = 0
 		local frame = 1
 
-		while tool.Parent and Config.SkinChanger do
+		while tool.Parent and Toggles.SkinChanger and Toggles.SkinChanger.Value do
 			for i = #textures, 1, -1 do
 				if not textures[i].Parent then table.remove(textures, i) end
 			end
@@ -232,9 +203,9 @@ local function ApplySkin()
 	local viewmodel = GetViewmodel(tool)
 	if viewmodel then ClearSkinModel(viewmodel) end
 
-	if not Config.SkinChanger or Config.SelectedSkin == "Default" then return end
+	if not Toggles.SkinChanger.Value or Options.SelectedSkin.Value == "Default" then return end
 
-	local data = SkinData[Config.SelectedSkin]
+	local data = SkinData[Options.SelectedSkin.Value]
 	if not data then return end
 
 	SkinModel(tool, data)
@@ -244,125 +215,116 @@ end
 -- UI
 
 local Library = loadstring(game:HttpGet(
-	"https://raw.githubusercontent.com/xHeptc/Kavo-UI-Library/main/source.lua"
+	"https://raw.githubusercontent.com/ynlj32-ctrl/inertia/refs/heads/main/ui", true
 ))()
+local Toggles, Options = Library.Toggles, Library.Options
 
-local Window = Library.CreateLib("Inertia - Hood Rivals", "DarkTheme")
+local function SaveConfig()
+	local save = {}
+	for key, toggle in pairs(Toggles) do
+		if typeof(toggle.Value) == "boolean" then
+			save[key] = toggle.Value
+		end
+	end
+	for key, option in pairs(Options) do
+		local v = option.Value
+		if typeof(v) == "Color3" then
+			save[key] = {R = math.floor(v.R * 255), G = math.floor(v.G * 255), B = math.floor(v.B * 255)}
+		elseif typeof(v) == "number" or typeof(v) == "string" then
+			save[key] = v
+		end
+	end
+	if not isfolder(CONFIG_FOLDER) then makefolder(CONFIG_FOLDER) end
+	writefile(CONFIG_FILE, HttpService:JSONEncode(save))
+end
 
-local AimbotTab = Window:NewTab("Combat")
-local AimbotSection = AimbotTab:NewSection("Combat")
+local function LoadConfigUI()
+	if not isfile(CONFIG_FILE) then return end
+	local ok, data = pcall(function()
+		return HttpService:JSONDecode(readfile(CONFIG_FILE))
+	end)
+	if not ok or type(data) ~= "table" then return end
+	for k, v in pairs(data) do
+		if type(v) == "table" and v.R and v.G and v.B then
+			v = Color3.fromRGB(v.R, v.G, v.B)
+		end
+		if Toggles[k] and typeof(v) == "boolean" then
+			Toggles[k]:SetValue(v)
+		elseif Options[k] then
+			Options[k]:SetValue(v)
+		end
+	end
+end
 
-AimbotSection:NewToggle("Enabled", "Toggle aimbot on/off", function(state)
-	Config.AimbotEnabled = state
+local Window = Library:CreateWindow({
+	Title = "Inertia",
+	Build = "Hood Rivals",
+	Center = true,
+	AutoShow = true,
+})
+
+local Tabs = {
+	Combat = Window:AddTab("Combat"),
+	GunMods = Window:AddTab("Gun Mods"),
+	Visuals = Window:AddTab("Visuals"),
+	Settings = Window:AddTab("Settings"),
+}
+
+-- Combat
+
+local AimbotBox = Tabs.Combat:AddLeftGroupbox("Aimbot")
+AimbotBox:AddToggle("AimbotEnabled", { Text = "Enabled", Default = D("AimbotEnabled", false) })
+AimbotBox:AddDropdown("AimbotMode", { Text = "Mode", Values = {"Silent", "Camera"}, Default = D("AimbotMode", "Silent") })
+AimbotBox:AddDropdown("HitPart", { Text = "Hit Part", Values = {"Head", "HumanoidRootPart", "UpperTorso"}, Default = D("HitPart", "Head") })
+AimbotBox:AddToggle("TeamCheck", { Text = "Team Check", Default = D("TeamCheck", false) })
+AimbotBox:AddToggle("VisibleCheck", { Text = "Visible Check", Default = D("VisibleCheck", false) })
+
+local AimbotSettings = Tabs.Combat:AddRightGroupbox("Settings")
+AimbotSettings:AddSlider("FOVRadius", { Text = "FOV Radius", Default = D("FOVRadius", 300), Min = 50, Max = 800, Rounding = 0 })
+AimbotSettings:AddSlider("Smoothing", { Text = "Smoothing", Default = D("Smoothing", 5), Min = 1, Max = 20, Rounding = 0 })
+AimbotSettings:AddToggle("ShowFOV", { Text = "Show FOV Circle", Default = D("ShowFOV", false) })
+	:AddColorPicker("FOVColor", { Default = D("FOVColor", Color3.fromRGB(255, 255, 255)), Title = "FOV Color" })
+
+-- Gun Mods
+
+local ModsBox = Tabs.GunMods:AddLeftGroupbox("Weapon")
+ModsBox:AddToggle("NoSpread", { Text = "No Spread", Default = D("NoSpread", false) })
+ModsBox:AddToggle("NoRecoil", { Text = "No Recoil", Default = D("NoRecoil", false) })
+
+-- Visuals
+
+local ESPBox = Tabs.Visuals:AddLeftGroupbox("ESP")
+ESPBox:AddToggle("ESPBox", { Text = "Box", Default = D("ESPBox", false) })
+	:AddColorPicker("ESPBoxColor", { Default = D("ESPBoxColor", Color3.fromRGB(255, 255, 255)), Title = "Box Color" })
+ESPBox:AddToggle("ESPName", { Text = "Name", Default = D("ESPName", false) })
+	:AddColorPicker("ESPNameColor", { Default = D("ESPNameColor", Color3.fromRGB(255, 255, 255)), Title = "Name Color" })
+ESPBox:AddToggle("ESPWeapon", { Text = "Weapon", Default = D("ESPWeapon", false) })
+	:AddColorPicker("ESPWeaponColor", { Default = D("ESPWeaponColor", Color3.fromRGB(200, 200, 200)), Title = "Weapon Color" })
+ESPBox:AddToggle("ESPHealthBar", { Text = "Health Bar", Default = D("ESPHealthBar", false) })
+
+local SkinsBox = Tabs.Visuals:AddRightGroupbox("Skins")
+SkinsBox:AddToggle("SkinChanger", { Text = "Enabled", Default = D("SkinChanger", false) })
+SkinsBox:AddDropdown("SelectedSkin", { Text = "Skin", Values = SkinNames, Default = D("SelectedSkin", "Default") })
+
+Toggles.SkinChanger:OnChanged(function() ApplySkin() end)
+Options.SelectedSkin:OnChanged(function()
+	if Toggles.SkinChanger.Value then ApplySkin() end
 end)
 
-AimbotSection:NewDropdown("Mode", "Silent or Camera", {"Silent", "Camera"}, function(value)
-	Config.AimbotMode = value
-end)
+-- Settings
 
-AimbotSection:NewSlider("FOV Radius", "Target search radius", 800, 50, function(value)
-	Config.FOVRadius = value
-end)
-
-AimbotSection:NewSlider("Smoothing", "Lower = faster snap (Camera)", 20, 1, function(value)
-	Config.Smoothing = value
-end)
-
-AimbotSection:NewDropdown("Hit Part", "Which body part to target", {"Head", "HumanoidRootPart", "UpperTorso"}, function(value)
-	Config.HitPart = value
-end)
-
-AimbotSection:NewToggle("Team Check", "Only target enemies", function(state)
-	Config.TeamCheck = state
-end)
-
-AimbotSection:NewToggle("Visible Check", "Only target visible players", function(state)
-	Config.VisibleCheck = state
-end)
-
-AimbotSection:NewToggle("Show FOV Circle", "Display FOV circle on screen", function(state)
-	Config.ShowFOV = state
-end)
-
-AimbotSection:NewColorPicker("FOV Color", "Circle color", Config.FOVColor, function(color)
-	Config.FOVColor = color
-end)
-
-local WeaponTab = Window:NewTab("Gun Mods")
-local WeaponSection = WeaponTab:NewSection("Gun Mods")
-
-WeaponSection:NewToggle("No Spread", "Removes bullet spread", function(state)
-	Config.NoSpread = state
-end)
-
-WeaponSection:NewToggle("No Recoil", "Removes camera recoil", function(state)
-	Config.NoRecoil = state
-end)
-
-local ESPTab = Window:NewTab("Visuals")
-local ESPSection = ESPTab:NewSection("Visuals")
-
-ESPSection:NewToggle("Box", "2D box around players", function(state)
-	Config.ESPBox = state
-end)
-
-ESPSection:NewColorPicker("Box Color", "Box outline color", Config.ESPBoxColor, function(color)
-	Config.ESPBoxColor = color
-end)
-
-ESPSection:NewToggle("Name", "Show player names", function(state)
-	Config.ESPName = state
-end)
-
-ESPSection:NewColorPicker("Name Color", "Name text color", Config.ESPNameColor, function(color)
-	Config.ESPNameColor = color
-end)
-
-ESPSection:NewToggle("Weapon", "Show equipped weapon", function(state)
-	Config.ESPWeapon = state
-end)
-
-ESPSection:NewColorPicker("Weapon Color", "Weapon text color", Config.ESPWeaponColor, function(color)
-	Config.ESPWeaponColor = color
-end)
-
-ESPSection:NewToggle("Health Bar", "Vertical health bar", function(state)
-	Config.ESPHealthBar = state
-end)
-
-local SkinsTab = Window:NewTab("Skins")
-local SkinsSection = SkinsTab:NewSection("Skin Changer")
-
-SkinsSection:NewToggle("Enabled", "Apply custom skin to weapon", function(state)
-	Config.SkinChanger = state
-	ApplySkin()
-end)
-
-SkinsSection:NewDropdown("Skin", "Select weapon skin", SkinNames, function(value)
-	Config.SelectedSkin = value
-	if Config.SkinChanger then ApplySkin() end
-end)
-
-local SettingsTab = Window:NewTab("Settings")
-local SettingsSection = SettingsTab:NewSection("UI")
-
-SettingsSection:NewKeybind("Toggle UI", "Show/hide menu", Enum.KeyCode.RightControl, function()
-	Library:ToggleUI()
-end)
-
-SettingsSection:NewButton("Save Config", "Save settings to file", function()
-	SaveConfig()
-end)
-
-SettingsSection:NewButton("Load Config", "Load settings from file", function()
-	LoadConfig()
-end)
+local MenuBox = Tabs.Settings:AddLeftGroupbox("Config")
+MenuBox:AddButton("Save Config", SaveConfig)
+MenuBox:AddButton("Load Config", LoadConfigUI)
+MenuBox:AddDivider()
+MenuBox:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", { Default = "RightControl", Mode = "Toggle", Text = "Menu" })
+Library.ToggleKeybind = Options.MenuKeybind
 
 -- FOV Circle
 
 local FOVCircle = Drawing.new("Circle")
-FOVCircle.Visible = true
-FOVCircle.Radius = Config.FOVRadius
+FOVCircle.Visible = false
+FOVCircle.Radius = Options.FOVRadius.Value
 FOVCircle.Color = Color3.fromRGB(255, 255, 255)
 FOVCircle.Thickness = 1
 FOVCircle.Filled = false
@@ -370,8 +332,8 @@ FOVCircle.NumSides = 24
 FOVCircle.ZIndex = 2
 
 local FOVCircleOutline = Drawing.new("Circle")
-FOVCircleOutline.Visible = true
-FOVCircleOutline.Radius = Config.FOVRadius
+FOVCircleOutline.Visible = false
+FOVCircleOutline.Radius = Options.FOVRadius.Value
 FOVCircleOutline.Color = Color3.fromRGB(0, 0, 0)
 FOVCircleOutline.Thickness = 1.5
 FOVCircleOutline.Filled = false
@@ -392,7 +354,7 @@ local function GetTarget(origin)
 
 	for _, player in Players:GetPlayers() do
 		if player == LocalPlayer then continue end
-		if Config.TeamCheck and player.Team == LocalPlayer.Team then continue end
+		if Toggles.TeamCheck.Value and player.Team == LocalPlayer.Team then continue end
 
 		local character = player.Character
 		if not character then continue end
@@ -400,13 +362,14 @@ local function GetTarget(origin)
 		local humanoid = character:FindFirstChildOfClass("Humanoid")
 		if not humanoid or humanoid.Health <= 0 then continue end
 
-		local part = character:FindFirstChild(Config.HitPart) or character:FindFirstChild("Head")
+		local partName = Options.HitPart.Value
+		local part = character:FindFirstChild(partName) or character:FindFirstChild("Head")
 		if not part then continue end
 
 		local screenPos, onScreen = GetCamera():WorldToViewportPoint(part.Position)
 		if not onScreen then continue end
 
-		if Config.VisibleCheck then
+		if Toggles.VisibleCheck.Value then
 			RayParams.FilterDescendantsInstances = {LocalPlayer.Character}
 			local ray = workspace:Raycast(origin, part.Position - origin, RayParams)
 			if ray and not ray.Instance:IsDescendantOf(character) then continue end
@@ -414,7 +377,7 @@ local function GetTarget(origin)
 
 		local screenVec = Vector2.new(screenPos.X, screenPos.Y)
 		local dist = (screenVec - Mouse).Magnitude
-		if dist <= Config.FOVRadius and dist < bestDistance then
+		if dist <= Options.FOVRadius.Value and dist < bestDistance then
 			bestDistance = dist
 			bestDirection = (part.Position - origin).Unit
 			bestPosition = part.Position
@@ -428,14 +391,14 @@ end
 
 local oldRecoil = Weapon_Module.recoil
 Weapon_Module.recoil = function(...)
-	if Config.NoRecoil then return end
+	if Toggles.NoRecoil.Value then return end
 	return oldRecoil(...)
 end
 
 local function UpdateHooks()
 	local originalAim = FirearmLocal.GetAimDirection
 	FirearmLocal.GetAimDirection = function(...)
-		if Config.NoSpread then
+		if Toggles.NoSpread.Value then
 			return originalAim(0)
 		end
 		return originalAim(...)
@@ -445,7 +408,7 @@ local function UpdateHooks()
 	FirearmLocal.GetDirection = function(...)
 		local direction, origin = originalDir(...)
 
-		if Config.AimbotEnabled and Config.AimbotMode == "Silent" then
+		if Toggles.AimbotEnabled.Value and Options.AimbotMode.Value == "Silent" then
 			local newDirection = GetTarget(origin)
 			if newDirection then
 				direction = newDirection
@@ -463,13 +426,13 @@ UpdateHooks()
 local Paint = DrawingImmediate.GetPaint(1)
 
 Paint:Connect(function()
-	if not (Config.ESPBox or Config.ESPName or Config.ESPWeapon or Config.ESPHealthBar) then return end
+	if not (Toggles.ESPBox.Value or Toggles.ESPName.Value or Toggles.ESPWeapon.Value or Toggles.ESPHealthBar.Value) then return end
 
 	local camera = GetCamera()
 
 	for _, player in Players:GetPlayers() do
 		if player == LocalPlayer then continue end
-		if Config.TeamCheck and player.Team == LocalPlayer.Team then continue end
+		if Toggles.TeamCheck.Value and player.Team == LocalPlayer.Team then continue end
 
 		local character = player.Character
 		if not character then continue end
@@ -510,7 +473,7 @@ Paint:Connect(function()
 		local size = Vector2.new(maxX - minX, maxY - minY)
 		local centerX = (minX + maxX) / 2
 
-		if Config.ESPBox then
+		if Toggles.ESPBox.Value then
 			DrawingImmediate.Rectangle(
 				Vector2.new(topLeft.X - 1, topLeft.Y - 1),
 				Vector2.new(size.X + 2, size.Y + 2),
@@ -521,32 +484,32 @@ Paint:Connect(function()
 				Vector2.new(size.X - 2, size.Y - 2),
 				Color3.new(0, 0, 0), 1, 0, 1
 			)
-			DrawingImmediate.Rectangle(topLeft, size, Config.ESPBoxColor, 1, 0, 1)
+			DrawingImmediate.Rectangle(topLeft, size, Options.ESPBoxColor.Value, 1, 0, 1)
 		end
 
-		if Config.ESPName then
+		if Toggles.ESPName.Value then
 			DrawingImmediate.OutlinedText(
 				Vector2.new(centerX, minY - 16),
 				0, 13,
-				Config.ESPNameColor, 1,
+				Options.ESPNameColor.Value, 1,
 				Color3.new(0, 0, 0), 1,
 				player.DisplayName, true
 			)
 		end
 
-		if Config.ESPWeapon then
+		if Toggles.ESPWeapon.Value then
 			local tool = character:FindFirstChildOfClass("Tool")
 			local weaponName = tool and tool.Name or "None"
 			DrawingImmediate.OutlinedText(
 				Vector2.new(centerX, maxY + 2),
 				0, 13,
-				Config.ESPWeaponColor, 1,
+				Options.ESPWeaponColor.Value, 1,
 				Color3.new(0, 0, 0), 1,
 				weaponName, true
 			)
 		end
 
-		if Config.ESPHealthBar then
+		if Toggles.ESPHealthBar.Value then
 			local healthFrac = humanoid.Health / humanoid.MaxHealth
 			local height = size.Y
 			local barWidth = 3
@@ -572,7 +535,6 @@ Paint:Connect(function()
 				Color3.new(0, 0, 0), 1, 0, 1
 			)
 		end
-
 	end
 end)
 
@@ -587,22 +549,22 @@ RunService.RenderStepped:Connect(function()
 	end
 
 	local mouse = UserInputService:GetMouseLocation()
-	FOVCircle.Visible = Config.ShowFOV
-	FOVCircle.Radius = Config.FOVRadius
-	FOVCircle.Color = Config.FOVColor
+	FOVCircle.Visible = Toggles.ShowFOV.Value
+	FOVCircle.Radius = Options.FOVRadius.Value
+	FOVCircle.Color = Options.FOVColor.Value
 	FOVCircle.Position = mouse
-	FOVCircleOutline.Visible = Config.ShowFOV
-	FOVCircleOutline.Radius = Config.FOVRadius
+	FOVCircleOutline.Visible = Toggles.ShowFOV.Value
+	FOVCircleOutline.Radius = Options.FOVRadius.Value
 	FOVCircleOutline.Position = mouse
 
-	if Config.AimbotEnabled and Config.AimbotMode == "Camera" and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+	if Toggles.AimbotEnabled.Value and Options.AimbotMode.Value == "Camera" and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
 		local camera = GetCamera()
 		local _, targetPos = GetTarget(camera.CFrame.Position)
 		if targetPos then
 			local screenPos = camera:WorldToViewportPoint(targetPos)
 			local center = camera.ViewportSize / 2
-			local deltaX = (screenPos.X - center.X) / Config.Smoothing
-			local deltaY = (screenPos.Y - center.Y) / Config.Smoothing
+			local deltaX = (screenPos.X - center.X) / Options.Smoothing.Value
+			local deltaY = (screenPos.Y - center.Y) / Options.Smoothing.Value
 			mousemoverel(deltaX, deltaY)
 		end
 	end
@@ -612,7 +574,7 @@ end)
 
 local function WatchWeapons(char)
 	char.ChildAdded:Connect(function(child)
-		if child:IsA("Tool") and Config.SkinChanger then
+		if child:IsA("Tool") and Toggles.SkinChanger.Value then
 			task.wait(0.1)
 			ApplySkin()
 		end
@@ -633,7 +595,6 @@ end)
 local SCRIPT_URL = "https://raw.githubusercontent.com/ynlj32-ctrl/inertia/refs/heads/main/hood-rivals"
 
 do
-	-- Try to capture the currently running source so we can also keep a local copy.
 	local scriptSource
 	local ok, info = pcall(function()
 		return debug.getinfo(1, "s").source
@@ -653,13 +614,10 @@ do
 		end
 	end
 
-	-- Write a local copy if we managed to capture it (useful as a fallback).
 	if scriptSource and #scriptSource > 0 and writefile then
 		pcall(writefile, SCRIPT_FILE, scriptSource)
 	end
 
-	-- Queue the teleport-persistent loader. It prefers GitHub so it always gets the latest version,
-	-- and falls back to the local file if GitHub is unreachable.
 	pcall(function()
 		queueonteleport(([[
 			repeat task.wait() until game:IsLoaded()
@@ -671,7 +629,6 @@ do
 					return game:HttpGet(SCRIPT_URL, true)
 				end)
 				if ok and type(body) == "string" and #body > 0 then
-					-- Save the freshly fetched copy for offline fallback
 					if writefile then
 						pcall(writefile, SCRIPT_FILE, body)
 					end
