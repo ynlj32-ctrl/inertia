@@ -891,13 +891,6 @@ function Library:CreateWindow(cfg)
 
 	local pages = create("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 33), Size = UDim2.new(1, 0, 0, self._colH) }, main)
 
-	-- footer
-	local bl = text(main, "Build:", { Position = UDim2.new(0, 7, 1, -19), Size = UDim2.fromOffset(36, 16), TextColor3 = C.TextDim })
-	local bv = text(main, cfg.Build or "Live", { Position = UDim2.new(0, 7 + measure("Build:"), 1, -19), Size = UDim2.fromOffset(80, 16) })
-	accent(bv, "TextColor3")
-	local ft = text(main, cfg.Footer or "sexy", { Position = UDim2.new(1, -108, 1, -19), Size = UDim2.fromOffset(100, 16), TextXAlignment = Enum.TextXAlignment.Right })
-	accent(ft, "TextColor3")
-
 	local tabs, current = {}, nil
 	function Window:SelectTab(tab)
 		if current then
