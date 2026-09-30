@@ -10,7 +10,21 @@ local function GetCamera()
 end
 
 local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-local FirearmLocal = getsenv(Character:WaitForChild("FirearmLocal"))
+Character:WaitForChild("Humanoid")
+task.wait(1)
+
+local function WaitForEnv(char)
+	local script = char:WaitForChild("FirearmLocal", 15)
+	if not script then return nil end
+	for _ = 1, 20 do
+		local ok, env = pcall(getsenv, script)
+		if ok and env and env.GetDirection then return env end
+		task.wait(0.5)
+	end
+	return nil
+end
+
+local FirearmLocal = WaitForEnv(Character)
 local Weapon_Module = require(ReplicatedStorage:WaitForChild("Weapon_Module"))
 local ViewmodelHandler = require(ReplicatedStorage:WaitForChild("ViewmodelHandler"))
 
@@ -396,6 +410,8 @@ Weapon_Module.recoil = function(...)
 end
 
 local function UpdateHooks()
+	if not FirearmLocal then return end
+
 	local originalAim = FirearmLocal.GetAimDirection
 	FirearmLocal.GetAimDirection = function(...)
 		if Toggles.NoSpread.Value then
@@ -420,6 +436,19 @@ local function UpdateHooks()
 end
 
 UpdateHooks()
+
+if not FirearmLocal then
+	task.spawn(function()
+		while not FirearmLocal do
+			local env = WaitForEnv(Character)
+			if env then
+				FirearmLocal = env
+				UpdateHooks()
+			end
+			task.wait(2)
+		end
+	end)
+end
 
 -- ESP
 
@@ -585,8 +614,13 @@ WatchWeapons(Character)
 
 LocalPlayer.CharacterAdded:Connect(function(char)
 	Character = char
-	FirearmLocal = getsenv(char:WaitForChild("FirearmLocal"))
-	UpdateHooks()
+	char:WaitForChild("Humanoid")
+	task.wait(1)
+	local env = WaitForEnv(char)
+	if env then
+		FirearmLocal = env
+		UpdateHooks()
+	end
 	WatchWeapons(char)
 end)
 
@@ -626,7 +660,7 @@ do
 
 			local function fetchSource()
 				local ok, body = pcall(function()
-					return game:HttpGet(SCRIPT_URL, true)
+					return game:HttpGet(SCRIPT_URL .. "?v=" .. tostring(tick()), true)
 				end)
 				if ok and type(body) == "string" and #body > 0 then
 					if writefile then
