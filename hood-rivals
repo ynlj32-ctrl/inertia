@@ -5,7 +5,7 @@ local RunService = game:GetService("RunService")
 local function GetCamera()
 	return workspace.CurrentCamera
 end
-local Character = LocalPlayer.Character
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local FirearmLocal = getsenv(Character:WaitForChild("FirearmLocal"))
@@ -578,7 +578,14 @@ end)
 
 -- Render Loop
 
+local lastConfigSave = os.clock()
+
 RunService.RenderStepped:Connect(function()
+	if os.clock() - lastConfigSave > 5 then
+		lastConfigSave = os.clock()
+		SaveConfig()
+	end
+
 	local mouse = UserInputService:GetMouseLocation()
 	FOVCircle.Visible = Config.ShowFOV
 	FOVCircle.Radius = Config.FOVRadius
@@ -623,6 +630,76 @@ end)
 
 -- Teleport Persistence
 
-if isfile(SCRIPT_FILE) then
-	queueonteleport(string.format("loadstring(readfile(%q))()", SCRIPT_FILE))
+local SCRIPT_URL = "https://raw.githubusercontent.com/ynlj32-ctrl/inertia/refs/heads/main/hood-rivals"
+
+do
+	-- Try to capture the currently running source so we can also keep a local copy.
+	local scriptSource
+	local ok, info = pcall(function()
+		return debug.getinfo(1, "s").source
+	end)
+
+	if ok and info and type(info) == "string" then
+		if info:sub(1, 1) == "@" then
+			local path = info:sub(2)
+			if isfile(path) then
+				local rok, src = pcall(readfile, path)
+				if rok then scriptSource = src end
+			end
+		elseif info:sub(1, 1) == "=" then
+			scriptSource = info:sub(2)
+		else
+			scriptSource = info
+		end
+	end
+
+	-- Write a local copy if we managed to capture it (useful as a fallback).
+	if scriptSource and #scriptSource > 0 and writefile then
+		pcall(writefile, SCRIPT_FILE, scriptSource)
+	end
+
+	-- Queue the teleport-persistent loader. It prefers GitHub so it always gets the latest version,
+	-- and falls back to the local file if GitHub is unreachable.
+	pcall(function()
+		queueonteleport(([[
+			repeat task.wait() until game:IsLoaded()
+			local SCRIPT_URL = %q
+			local SCRIPT_FILE = %q
+
+			local function fetchSource()
+				local ok, body = pcall(function()
+					return game:HttpGet(SCRIPT_URL, true)
+				end)
+				if ok and type(body) == "string" and #body > 0 then
+					-- Save the freshly fetched copy for offline fallback
+					if writefile then
+						pcall(writefile, SCRIPT_FILE, body)
+					end
+					return body
+				end
+				if isfile(SCRIPT_FILE) then
+					local rok, src = pcall(readfile, SCRIPT_FILE)
+					if rok then return src end
+				end
+				return nil
+			end
+
+			local src = fetchSource()
+			if not src then
+				warn("[Inertia] teleport reload: no source available")
+				return
+			end
+
+			local fn, compileErr = loadstring(src)
+			if not fn then
+				warn("[Inertia] teleport reload compile error: " .. tostring(compileErr))
+				return
+			end
+
+			local ok, err = pcall(fn)
+			if not ok then
+				warn("[Inertia] teleport reload runtime error: " .. tostring(err))
+			end
+		]]):format(SCRIPT_URL, SCRIPT_FILE))
+	end)
 end
