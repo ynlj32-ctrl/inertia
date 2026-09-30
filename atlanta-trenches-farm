@@ -1,0 +1,152 @@
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local LocalPlayer = Players.LocalPlayer
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
+local Humanoid = Character:WaitForChild("Humanoid")
+
+local DirtSpots = workspace.GameFolder.Interactables.Jobs.Janitor
+local MailBoxes = workspace.GameFolder.Interactables.Jobs.Mailman.Boxes
+
+local TELEPORT_OFFSET = Vector3.new(0, 0, 0)
+
+local function DisableFallDamage()
+	if not Humanoid then return end
+	Humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+	Humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+end
+
+DisableFallDamage()
+
+-- UI
+
+local Library = loadstring(game:HttpGet(
+	"https://raw.githubusercontent.com/ynlj32-ctrl/inertia/refs/heads/main/ui", true
+))()
+local Toggles, Options = Library.Toggles, Library.Options
+
+local Window = Library:CreateWindow({
+	Title = "Inertia",
+	Build = "Atlanta Trenches",
+	Center = true,
+	AutoShow = true,
+})
+
+local Tab = Window:AddTab("Farm")
+
+local FarmBox = Tab:AddLeftGroupbox("Auto Farm")
+FarmBox:AddToggle("JanitorFarm", { Text = "Janitor Farm", Default = false })
+FarmBox:AddSlider("FarmSpeed", { Text = "Delay", Default = 0.5, Min = 0.1, Max = 2, Rounding = 1 })
+FarmBox:AddToggle("MailmanFarm", { Text = "Mailman Farm", Default = false })
+FarmBox:AddSlider("WalkSpeed", { Text = "Speed", Default = 32, Min = 16, Max = 128, Rounding = 0 })
+
+local StartShift = game:GetService("ReplicatedStorage").Remotes.StartShift
+
+local JobsBox = Tab:AddRightGroupbox("Jobs")
+JobsBox:AddButton("Start Janitor", function() StartShift:InvokeServer("Janitor") end)
+JobsBox:AddButton("Start Mailman", function() StartShift:InvokeServer("Mailman") end)
+
+local SettingsBox = Tab:AddRightGroupbox("Settings")
+SettingsBox:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", { Default = "RightControl", Mode = "Toggle", Text = "Menu" })
+Library.ToggleKeybind = Options.MenuKeybind
+
+-- Character Respawn
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+	Character = char
+	HumanoidRootPart = char:WaitForChild("HumanoidRootPart")
+	Humanoid = char:WaitForChild("Humanoid")
+	DisableFallDamage()
+end)
+
+local function EnsureCharacter()
+	if not HumanoidRootPart or not HumanoidRootPart.Parent then
+		Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+		HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
+		Humanoid = Character:WaitForChild("Humanoid")
+	end
+end
+
+local function TweenTo(target, toggleKey)
+	EnsureCharacter()
+	local distance = (HumanoidRootPart.Position - target).Magnitude
+	if distance < 1 then return true end
+
+	local tween = TweenService:Create(
+		HumanoidRootPart,
+		TweenInfo.new(distance / Options.WalkSpeed.Value, Enum.EasingStyle.Linear),
+		{ CFrame = CFrame.new(target) }
+	)
+	tween:Play()
+	tween.Completed:Wait()
+	return Toggles[toggleKey].Value
+end
+
+-- Janitor Farm
+
+local JANITOR_RANGE = 30
+
+task.spawn(function()
+	while true do
+		if Toggles.JanitorFarm.Value then
+			EnsureCharacter()
+
+			local firstSpot = DirtSpots:GetChildren()[1]
+			if firstSpot and (HumanoidRootPart.Position - firstSpot:GetPivot().Position).Magnitude > JANITOR_RANGE then
+				local arrived = TweenTo(firstSpot:GetPivot().Position + TELEPORT_OFFSET, "JanitorFarm")
+				if not arrived then
+					task.wait(1)
+					continue
+				end
+			end
+
+			for _, spot in DirtSpots:GetChildren() do
+				if not Toggles.JanitorFarm.Value then break end
+				EnsureCharacter()
+
+				local prompt = spot:FindFirstChildWhichIsA("ProximityPrompt", true)
+				if not prompt then continue end
+
+				local arrived = TweenTo(spot:GetPivot().Position + TELEPORT_OFFSET, "JanitorFarm")
+				if not arrived then break end
+				task.wait(Options.FarmSpeed.Value)
+
+				if prompt and prompt.Parent then
+					fireproximityprompt(prompt)
+				end
+
+				task.wait(Options.FarmSpeed.Value)
+			end
+		end
+		task.wait(1)
+	end
+end)
+
+-- Mailman Farm
+
+task.spawn(function()
+	while true do
+		if Toggles.MailmanFarm.Value then
+			for _, box in MailBoxes:GetChildren() do
+				if not Toggles.MailmanFarm.Value then break end
+				EnsureCharacter()
+
+				local highlight = box:FindFirstChildWhichIsA("Highlight", true)
+				if not highlight then continue end
+
+				local prompt = box:FindFirstChildWhichIsA("ProximityPrompt", true)
+				if not prompt then continue end
+
+				local arrived = TweenTo(box:GetPivot().Position + TELEPORT_OFFSET, "MailmanFarm")
+				if not arrived then break end
+				task.wait(Options.FarmSpeed.Value)
+
+				if prompt and prompt.Parent then
+					fireproximityprompt(prompt)
+				end
+				task.wait(Options.FarmSpeed.Value)
+			end
+		end
+		task.wait(1)
+	end
+end)
