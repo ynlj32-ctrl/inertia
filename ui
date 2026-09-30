@@ -935,7 +935,9 @@ function Library:CreateWindow(cfg)
 
 	-- global input: menu key + click-away for popups
 	connect(UserInputService.InputBegan, function(i, gp)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+		-- gp is true when the click lands on a GUI button (dropdown items, swatches, ...), so only
+		-- treat clicks on empty space as "click away"
+		if i.UserInputType == Enum.UserInputType.MouseButton1 and not gp then
 			local p = self._popup
 			if p then
 				local m = mouse()
