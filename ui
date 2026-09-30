@@ -1,0 +1,966 @@
+--// Linoria-style UI library, dark / pink skin (Roblox Luau, client side)
+--// Same general system as LinoriaLib:
+--//   Library:CreateWindow -> Window:AddTab -> Tab:AddLeftGroupbox / AddRightGroupbox / AddLeftTabbox / AddRightTabbox
+--//   Groupbox:AddToggle / AddSlider / AddDropdown / AddInput / AddButton / AddLabel / AddDivider / AddBlank
+--//   Label / Toggle :AddColorPicker(idx, info), :AddKeyPicker(idx, info)
+--//   Elements are registered in Toggles[idx] / Options[idx] and expose .Value, :SetValue(), :OnChanged()
+--// Extra (from the reference skin): Tab:AddSubTab(name) gives a left sidebar, Groupbox:AddSection(name) gives a collapsible header.
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TextService = game:GetService("TextService")
+
+local Library = {
+	Accent = Color3.fromRGB(224, 85, 160),
+	Font = Enum.Font.SourceSans,
+	TextSize = 15,
+	Toggles = {},
+	Options = {},
+	ToggleKeybind = Enum.KeyCode.RightShift,
+	Unloaded = false,
+	_accentFns = {},
+	_conns = {},
+	_unloadFns = {},
+}
+Library.__index = Library
+
+local genv = (getgenv and getgenv()) or _G
+genv.Toggles = Library.Toggles
+genv.Options = Library.Options
+
+local C = {
+	Window = Color3.fromRGB(10, 10, 10),
+	Border = Color3.fromRGB(30, 30, 30),
+	Panel = Color3.fromRGB(13, 13, 13),
+	Header = Color3.fromRGB(21, 21, 21),
+	Input = Color3.fromRGB(20, 20, 20),
+	Off = Color3.fromRGB(28, 28, 28),
+	Text = Color3.fromRGB(165, 165, 165),
+	TextDim = Color3.fromRGB(90, 90, 90),
+	TextHi = Color3.fromRGB(220, 220, 220),
+	Black = Color3.fromRGB(0, 0, 0),
+}
+
+--// helpers ------------------------------------------------------------------
+local function create(class, props, parent)
+	local o = Instance.new(class)
+	for k, v in pairs(props) do o[k] = v end
+	o.Parent = parent
+	return o
+end
+
+local function box(parent, props, strokeColor)
+	props.BorderSizePixel = 0
+	local f = create("Frame", props, parent)
+	if strokeColor then
+		create("UIStroke", { Color = strokeColor, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, f)
+	end
+	return f
+end
+
+local function text(parent, str, props)
+	local base = {
+		BackgroundTransparency = 1, Text = str, Font = Library.Font, TextSize = Library.TextSize,
+		TextColor3 = C.Text, TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, 0, 0, 14),
+	}
+	for k, v in pairs(props or {}) do base[k] = v end
+	return create("TextLabel", base, parent)
+end
+
+local function measure(str)
+	return TextService:GetTextSize(str, Library.TextSize, Library.Font, Vector2.new(1000, 100)).X
+end
+
+local function connect(signal, fn)
+	local c = signal:Connect(fn)
+	table.insert(Library._conns, c)
+	return c
+end
+
+local function inside(obj, pos)
+	local p, s = obj.AbsolutePosition, obj.AbsoluteSize
+	return pos.X >= p.X and pos.X <= p.X + s.X and pos.Y >= p.Y and pos.Y <= p.Y + s.Y
+end
+
+local function mouse() return UserInputService:GetMouseLocation() end
+
+local function makeDrag(obj, cb)
+	connect(obj.InputBegan, function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			cb(mouse())
+			local mv, en
+			mv = UserInputService.InputChanged:Connect(function(j)
+				if j.UserInputType == Enum.UserInputType.MouseMovement then cb(mouse()) end
+			end)
+			en = UserInputService.InputEnded:Connect(function(j)
+				if j.UserInputType == Enum.UserInputType.MouseButton1 then mv:Disconnect(); en:Disconnect() end
+			end)
+		end
+	end)
+end
+
+local function keyName(input)
+	local t = input.UserInputType
+	if t == Enum.UserInputType.MouseButton1 then return "MB1" end
+	if t == Enum.UserInputType.MouseButton2 then return "MB2" end
+	if t == Enum.UserInputType.MouseButton3 then return "MB3" end
+	if t == Enum.UserInputType.Keyboard then return input.KeyCode.Name end
+	return nil
+end
+
+local function fire(o, ...)
+	if o.Callback then task.spawn(o.Callback, ...) end
+	for _, f in ipairs(o.Changed) do task.spawn(f, ...) end
+end
+
+--// accent registry
+function Library:_bindAccent(fn)
+	table.insert(self._accentFns, fn)
+	fn(self.Accent)
+end
+local function accent(obj, prop)
+	Library:_bindAccent(function(c) obj[prop] = c end)
+end
+function Library:SetAccent(color)
+	self.Accent = color
+	for _, fn in ipairs(self._accentFns) do fn(color) end
+end
+
+--// popup manager (one popup open at a time)
+function Library:_openPopup(frame, opener, onClose)
+	self:_closePopup()
+	self._popup = { Frame = frame, Opener = opener, OnClose = onClose }
+	frame.Visible = true
+end
+function Library:_closePopup()
+	local p = self._popup
+	if p then
+		self._popup = nil
+		p.Frame.Visible = false
+		if p.OnClose then p.OnClose() end
+	end
+end
+function Library:_isOpen(frame)
+	return self._popup and self._popup.Frame == frame
+end
+
+function Library:OnUnload(fn) table.insert(self._unloadFns, fn) end
+function Library:Unload()
+	self.Unloaded = true
+	for _, c in ipairs(self._conns) do pcall(function() c:Disconnect() end) end
+	for _, f in ipairs(self._unloadFns) do pcall(f) end
+	if self.Gui then self.Gui:Destroy() end
+	genv.Toggles, genv.Options = nil, nil
+end
+
+function Library:Toggle(v)
+	if v == nil then v = not self.Main.Visible end
+	self.Main.Visible = v
+	self.Modal.Modal = v
+	if not v then self:_closePopup() end
+end
+
+function Library:Notify(str, duration)
+	local holder = self.NotifyHolder
+	local n = box(holder, { BackgroundColor3 = C.Window, AutomaticSize = Enum.AutomaticSize.XY, Size = UDim2.fromOffset(0, 20) }, C.Border)
+	local bar = box(n, { Size = UDim2.new(0, 2, 1, 0), BackgroundColor3 = self.Accent })
+	accent(bar, "BackgroundColor3")
+	text(n, str, { AutomaticSize = Enum.AutomaticSize.XY, Size = UDim2.fromOffset(0, 20), Position = UDim2.fromOffset(8, 0), TextColor3 = C.TextHi })
+	create("UIPadding", { PaddingRight = UDim.new(0, 8) }, n)
+	task.delay(duration or 4, function() if n.Parent then n:Destroy() end end)
+end
+
+--// shared element base ------------------------------------------------------
+local Element = {}
+Element.__index = Element
+function Element:OnChanged(fn) table.insert(self.Changed, fn) end
+function Element:AddColorPicker(idx, info) return Library:_ColorPicker(self, idx, info) end
+function Element:AddKeyPicker(idx, info) return Library:_KeyPicker(self, idx, info) end
+
+local function reserve(host, w)
+	local x = host._rx or 0
+	host._rx = x + w + 4
+	return x
+end
+
+--// color picker -------------------------------------------------------------
+function Library:_ColorPicker(host, idx, info)
+	info = info or {}
+	local cp = setmetatable({
+		Type = "ColorPicker", Value = info.Default or Color3.new(1, 1, 1), Transparency = info.Transparency or 0,
+		Callback = info.Callback, Changed = {},
+	}, Element)
+	cp.Hue, cp.Sat, cp.Vib = cp.Value:ToHSV()
+	local hasTrans = info.Transparency ~= nil
+
+	local x = reserve(host, 18)
+	local sw = create("TextButton", {
+		Text = "", AutoButtonColor = false, BorderSizePixel = 0, Size = UDim2.fromOffset(18, 9),
+		Position = UDim2.new(1, -(x + 18), 0.5, -4), BackgroundColor3 = cp.Value,
+	}, host.Row)
+	create("UIStroke", { Color = C.Black, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, sw)
+
+	local W = 194
+	local y = 176
+	local transY = hasTrans and y or nil
+	if hasTrans then y += 18 end
+	local hexY, rgbY = y + 4, y + 26
+	local H = rgbY + 18 + 8
+
+	local pop = box(self.Gui, { Size = UDim2.fromOffset(W, H), BackgroundColor3 = C.Window, Visible = false, ZIndex = 100 }, C.Border)
+	text(pop, info.Title or "Color", { Position = UDim2.fromOffset(8, 4), Size = UDim2.new(1, -16, 0, 14), TextColor3 = C.TextDim })
+
+	local sv = create("TextButton", { Text = "", AutoButtonColor = false, BorderSizePixel = 0, Position = UDim2.fromOffset(8, 22), Size = UDim2.fromOffset(150, 150) }, pop)
+	create("UIStroke", { Color = C.Border, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, sv)
+	local white = box(sv, { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(1, 1, 1) })
+	create("UIGradient", { Transparency = NumberSequence.new(0, 1) }, white)
+	local black = box(sv, { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0) })
+	create("UIGradient", { Rotation = 90, Transparency = NumberSequence.new(1, 0) }, black)
+	local svCur = box(sv, { Size = UDim2.fromOffset(6, 6), BackgroundColor3 = Color3.new(1, 1, 1) }, C.Black)
+
+	local hue = create("TextButton", { Text = "", AutoButtonColor = false, BorderSizePixel = 0, Position = UDim2.fromOffset(164, 22), Size = UDim2.fromOffset(22, 150), BackgroundColor3 = Color3.new(1, 1, 1) }, pop)
+	create("UIStroke", { Color = C.Border, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, hue)
+	create("UIGradient", { Rotation = 90, Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)), ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
+		ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 255, 0)), ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 255, 255)),
+		ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 0, 255)), ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 0, 255)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 0)),
+	}) }, hue)
+	local hueCur = box(hue, { Size = UDim2.new(1, 0, 0, 2), BackgroundColor3 = Color3.new(1, 1, 1) })
+
+	local trans, transCur
+	if hasTrans then
+		trans = create("TextButton", { Text = "", AutoButtonColor = false, BorderSizePixel = 0, Position = UDim2.fromOffset(8, transY), Size = UDim2.fromOffset(178, 12), BackgroundColor3 = cp.Value }, pop)
+		create("UIStroke", { Color = C.Border, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, trans)
+		create("UIGradient", { Transparency = NumberSequence.new(0, 0.9) }, trans)
+		transCur = box(trans, { Size = UDim2.new(0, 2, 1, 0), BackgroundColor3 = Color3.new(1, 1, 1) })
+	end
+
+	local function inputBox(yy, placeholder)
+		local b = create("TextBox", {
+			BackgroundColor3 = C.Input, BorderSizePixel = 0, Position = UDim2.fromOffset(8, yy), Size = UDim2.fromOffset(178, 18),
+			Font = Library.Font, TextSize = Library.TextSize, TextColor3 = C.TextHi, ClearTextOnFocus = false,
+			PlaceholderText = placeholder, Text = "", TextXAlignment = Enum.TextXAlignment.Left,
+		}, pop)
+		create("UIStroke", { Color = C.Border, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, b)
+		create("UIPadding", { PaddingLeft = UDim.new(0, 6) }, b)
+		return b
+	end
+	local hexBox, rgbBox = inputBox(hexY, "Hex"), inputBox(rgbY, "R, G, B")
+
+	local function refresh(silent)
+		local col = Color3.fromHSV(cp.Hue, cp.Sat, cp.Vib)
+		cp.Value = col
+		sw.BackgroundColor3 = col
+		sv.BackgroundColor3 = Color3.fromHSV(cp.Hue, 1, 1)
+		svCur.Position = UDim2.new(cp.Sat, -3, 1 - cp.Vib, -3)
+		hueCur.Position = UDim2.new(0, 0, cp.Hue, -1)
+		if trans then trans.BackgroundColor3 = col; transCur.Position = UDim2.new(cp.Transparency, -1, 0, 0) end
+		if not hexBox:IsFocused() then hexBox.Text = "#" .. col:ToHex():upper() end
+		if not rgbBox:IsFocused() then rgbBox.Text = string.format("%d, %d, %d", col.R * 255 + 0.5, col.G * 255 + 0.5, col.B * 255 + 0.5) end
+		if not silent then fire(cp, col, cp.Transparency) end
+	end
+
+	makeDrag(sv, function(m)
+		cp.Sat = math.clamp((m.X - sv.AbsolutePosition.X) / sv.AbsoluteSize.X, 0, 1)
+		cp.Vib = 1 - math.clamp((m.Y - sv.AbsolutePosition.Y) / sv.AbsoluteSize.Y, 0, 1)
+		refresh()
+	end)
+	makeDrag(hue, function(m)
+		cp.Hue = math.clamp((m.Y - hue.AbsolutePosition.Y) / hue.AbsoluteSize.Y, 0, 0.999)
+		refresh()
+	end)
+	if trans then
+		makeDrag(trans, function(m)
+			cp.Transparency = math.clamp((m.X - trans.AbsolutePosition.X) / trans.AbsoluteSize.X, 0, 1)
+			refresh()
+		end)
+	end
+	connect(hexBox.FocusLost, function()
+		local ok, col = pcall(Color3.fromHex, hexBox.Text)
+		if ok and col then cp.Hue, cp.Sat, cp.Vib = col:ToHSV() end
+		refresh()
+	end)
+	connect(rgbBox.FocusLost, function()
+		local r, g, b = rgbBox.Text:match("(%d+)%D+(%d+)%D+(%d+)")
+		if r then cp.Hue, cp.Sat, cp.Vib = Color3.fromRGB(math.min(r, 255), math.min(g, 255), math.min(b, 255)):ToHSV() end
+		refresh()
+	end)
+
+	connect(sw.MouseButton1Click, function()
+		if self:_isOpen(pop) then return self:_closePopup() end
+		local p, vs = sw.AbsolutePosition, self.Gui.AbsoluteSize
+		pop.Position = UDim2.fromOffset(math.clamp(p.X, 0, vs.X - W), math.clamp(p.Y + 14, 0, vs.Y - H))
+		self:_openPopup(pop, sw)
+	end)
+
+	function cp:SetValueRGB(col, tr)
+		self.Hue, self.Sat, self.Vib = col:ToHSV()
+		if tr then self.Transparency = tr end
+		refresh()
+	end
+	function cp:SetValue(hsv, tr)
+		self.Hue, self.Sat, self.Vib = hsv[1], hsv[2], hsv[3]
+		if tr then self.Transparency = tr end
+		refresh()
+	end
+
+	refresh(true)
+	self.Options[idx] = cp
+	return cp
+end
+
+--// key picker ---------------------------------------------------------------
+function Library:_KeyPicker(host, idx, info)
+	info = info or {}
+	local kp = setmetatable({
+		Type = "KeyPicker", Value = info.Default or "None", Mode = info.Mode or "Toggle",
+		Toggled = false, Held = false, Callback = info.Callback, Changed = {}, Clicks = {},
+	}, Element)
+
+	local x = reserve(host, measure("[" .. kp.Value .. "]"))
+	local btn = create("TextButton", {
+		BackgroundTransparency = 1, AutoButtonColor = false, Font = Library.Font, TextSize = Library.TextSize,
+		TextColor3 = C.TextDim, AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 14),
+		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -x, 0.5, 0), Text = "",
+	}, host.Row)
+
+	local binding = false
+	local function render() btn.Text = binding and "[...]" or ("[" .. kp.Value .. "]") end
+
+	function kp:GetState()
+		if self.Mode == "Always" then return true end
+		if self.Mode == "Hold" then return self.Held end
+		return self.Toggled
+	end
+	function kp:SetValue(v, mode)
+		self.Value = v
+		if mode then self.Mode = mode end
+		render()
+		if info.ChangedCallback then task.spawn(info.ChangedCallback, v) end
+		for _, f in ipairs(self.Changed) do task.spawn(f, v) end
+	end
+	function kp:OnClick(fn) table.insert(self.Clicks, fn) end
+
+	connect(btn.MouseButton1Click, function()
+		binding = true
+		render()
+		local c
+		c = UserInputService.InputBegan:Connect(function(i)
+			local n = keyName(i)
+			if n then
+				c:Disconnect()
+				binding = false
+				kp:SetValue(n == "Escape" and "None" or n)
+			end
+		end)
+	end)
+	connect(btn.MouseButton2Click, function()
+		local modes = { "Always", "Hold", "Toggle" }
+		local nxt = modes[(table.find(modes, kp.Mode) % #modes) + 1]
+		kp.Mode = nxt
+		Library:Notify("Keybind mode: " .. nxt, 2)
+	end)
+
+	connect(UserInputService.InputBegan, function(i, gp)
+		if gp or binding or kp.Value == "None" or keyName(i) ~= kp.Value then return end
+		if kp.Mode == "Hold" then kp.Held = true; fire(kp, true)
+		elseif kp.Mode == "Toggle" then kp.Toggled = not kp.Toggled; fire(kp, kp.Toggled) end
+		for _, f in ipairs(kp.Clicks) do task.spawn(f) end
+	end)
+	connect(UserInputService.InputEnded, function(i)
+		if kp.Mode == "Hold" and keyName(i) == kp.Value then kp.Held = false; fire(kp, false) end
+	end)
+
+	render()
+	self.Options[idx] = kp
+	return kp
+end
+
+--// element methods (shared by groupboxes, tabbox tabs and sections) ----------
+local Base = {}
+Base.__index = Base
+
+function Base:_order() self._o = (self._o or 0) + 1; return self._o end
+function Base:_row(h)
+	return create("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, h), LayoutOrder = self:_order() }, self.Container)
+end
+
+function Base:AddLabel(str, wrap)
+	local lbl = setmetatable({ Type = "Label", Changed = {} }, Element)
+	local row = self:_row(14)
+	lbl.Row = row
+	local t = text(row, str, { Size = UDim2.new(1, 0, 1, 0), TextColor3 = C.Text })
+	if wrap then
+		row.AutomaticSize = Enum.AutomaticSize.Y
+		t.AutomaticSize = Enum.AutomaticSize.Y
+		t.Size = UDim2.new(1, 0, 0, 14)
+		t.TextWrapped = true
+		t.TextYAlignment = Enum.TextYAlignment.Top
+	end
+	function lbl:SetText(s) t.Text = s end
+	return lbl
+end
+
+function Base:AddToggle(idx, info)
+	info = info or {}
+	local t = setmetatable({ Type = "Toggle", Value = info.Default and true or false, Callback = info.Callback, Changed = {} }, Element)
+	local row = self:_row(12)
+	t.Row = row
+	local hit = create("TextButton", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Text = "", AutoButtonColor = false }, row)
+	local ind = box(row, { Position = UDim2.fromOffset(0, 3), Size = UDim2.fromOffset(6, 6), BackgroundColor3 = C.Off }, Color3.fromRGB(20, 20, 20))
+	local lbl = text(row, info.Text or idx, { Position = UDim2.fromOffset(16, 0), Size = UDim2.new(1, -16, 1, 0), TextColor3 = C.TextDim })
+	local function render()
+		ind.BackgroundColor3 = t.Value and Library.Accent or C.Off
+		lbl.TextColor3 = t.Value and C.TextHi or C.TextDim
+	end
+	Library:_bindAccent(render)
+	function t:SetValue(v)
+		v = v and true or false
+		if v == self.Value then return end
+		self.Value = v
+		render()
+		fire(self, v)
+	end
+	connect(hit.MouseButton1Click, function() t:SetValue(not t.Value) end)
+	Library.Toggles[idx] = t
+	return t
+end
+
+function Base:AddSlider(idx, info)
+	info = info or {}
+	local s = setmetatable({
+		Type = "Slider", Min = info.Min or 0, Max = info.Max or 100, Rounding = info.Rounding or 0,
+		Suffix = info.Suffix or "", Callback = info.Callback, Changed = {},
+	}, Element)
+	s.Value = math.clamp(info.Default or s.Min, s.Min, s.Max)
+	local row = self:_row(24)
+	text(row, info.Text or idx, { Size = UDim2.new(1, 0, 0, 14), TextColor3 = C.Text })
+	local val = text(row, "", { Size = UDim2.new(1, 0, 0, 14), TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = C.Text })
+	local bar = box(row, { Position = UDim2.fromOffset(0, 17), Size = UDim2.new(1, 0, 0, 4), BackgroundColor3 = C.Off })
+	local fill = box(bar, { Size = UDim2.fromScale(0, 1), BackgroundColor3 = Library.Accent })
+	accent(fill, "BackgroundColor3")
+	local function render()
+		fill.Size = UDim2.fromScale((s.Value - s.Min) / (s.Max - s.Min), 1)
+		val.Text = string.format("%." .. s.Rounding .. "f", s.Value) .. s.Suffix
+	end
+	function s:SetValue(v)
+		local m = 10 ^ self.Rounding
+		v = math.clamp(math.floor(v * m + 0.5) / m, self.Min, self.Max)
+		local changed = v ~= self.Value
+		self.Value = v
+		render()
+		if changed then fire(self, v) end
+	end
+	makeDrag(row, function(m)
+		local a = math.clamp((m.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+		s:SetValue(s.Min + (s.Max - s.Min) * a)
+	end)
+	render()
+	Library.Options[idx] = s
+	return s
+end
+
+function Base:AddDropdown(idx, info)
+	info = info or {}
+	local d = setmetatable({
+		Type = "Dropdown", Values = info.Values or {}, Multi = info.Multi, AllowNull = info.AllowNull,
+		Callback = info.Callback, Changed = {},
+	}, Element)
+	local def = info.Default
+	if d.Multi then
+		d.Value = {}
+		if type(def) == "table" then
+			for k, v in pairs(def) do
+				if v == true then d.Value[k] = true
+				elseif type(v) == "string" then d.Value[v] = true
+				elseif type(v) == "number" and d.Values[v] then d.Value[d.Values[v]] = true end
+			end
+		end
+	else
+		if type(def) == "number" then d.Value = d.Values[def]
+		elseif type(def) == "string" then d.Value = def
+		elseif not d.AllowNull then d.Value = d.Values[1] end
+	end
+
+	local hasText = info.Text ~= nil
+	local row = self:_row(hasText and 36 or 18)
+	if hasText then text(row, info.Text, { Size = UDim2.new(1, 0, 0, 14), TextColor3 = C.Text }) end
+	local main = create("TextButton", {
+		BackgroundColor3 = C.Input, BorderSizePixel = 0, AutoButtonColor = false, Text = "",
+		Position = UDim2.fromOffset(0, hasText and 17 or 0), Size = UDim2.new(1, 0, 0, 18),
+	}, row)
+	create("UIStroke", { Color = C.Border, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, main)
+	local shown = text(main, "", { Position = UDim2.fromOffset(6, 0), Size = UDim2.new(1, -22, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd, TextColor3 = C.TextHi })
+	local arrow = text(main, "^", { Position = UDim2.new(1, -16, 0, 0), Size = UDim2.fromOffset(12, 18), TextXAlignment = Enum.TextXAlignment.Center, Rotation = 180 })
+
+	local listFrame = box(self.Gui, { BackgroundColor3 = C.Input, Visible = false, ZIndex = 100 }, C.Border)
+	local scroll = create("ScrollingFrame", {
+		BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.fromScale(1, 1), CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
+		TopImage = "rbxasset://textures/ui/Scroll/scroll-middle.png", MidImage = "rbxasset://textures/ui/Scroll/scroll-middle.png",
+		BottomImage = "rbxasset://textures/ui/Scroll/scroll-middle.png",
+	}, listFrame)
+	accent(scroll, "ScrollBarImageColor3")
+	create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }, scroll)
+
+	local function render()
+		if d.Multi then
+			local out = {}
+			for _, v in ipairs(d.Values) do if d.Value[v] then table.insert(out, v) end end
+			shown.Text = #out > 0 and table.concat(out, ", ") or "--"
+		else
+			shown.Text = d.Value ~= nil and tostring(d.Value) or "--"
+		end
+	end
+	local function selected(v) if d.Multi then return d.Value[v] else return d.Value == v end end
+
+	local function build()
+		for _, c in ipairs(scroll:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+		for n, v in ipairs(d.Values) do
+			local b = create("TextButton", {
+				BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 18), LayoutOrder = n, AutoButtonColor = false,
+				Font = Library.Font, TextSize = Library.TextSize, Text = tostring(v), TextXAlignment = Enum.TextXAlignment.Left,
+				TextColor3 = selected(v) and Library.Accent or C.Text,
+			}, scroll)
+			create("UIPadding", { PaddingLeft = UDim.new(0, 6) }, b)
+			connect(b.MouseButton1Click, function()
+				if d.Multi then
+					d.Value[v] = (not d.Value[v]) or nil
+					d:SetValue(d.Value)
+					b.TextColor3 = selected(v) and Library.Accent or C.Text
+				else
+					if d.Value == v and d.AllowNull then d:SetValue(nil) else d:SetValue(v) end
+					Library:_closePopup()
+				end
+			end)
+		end
+		local h = math.min(#d.Values, 8) * 18
+		listFrame.Size = UDim2.fromOffset(main.AbsoluteSize.X, h)
+	end
+
+	function d:SetValue(v)
+		self.Value = v
+		render()
+		fire(self, v)
+	end
+	function d:SetValues(list)
+		self.Values = list
+		if not self.Multi and not table.find(list, self.Value) then self.Value = nil end
+		render()
+		if Library:_isOpen(listFrame) then build() end
+	end
+
+	connect(main.MouseButton1Click, function()
+		if Library:_isOpen(listFrame) then return Library:_closePopup() end
+		build()
+		local p = main.AbsolutePosition
+		listFrame.Position = UDim2.fromOffset(p.X, p.Y + main.AbsoluteSize.Y + 2)
+		Library:_openPopup(listFrame, main, function() arrow.Rotation = 180 end)
+		arrow.Rotation = 0
+	end)
+
+	render()
+	Library.Options[idx] = d
+	return d
+end
+
+function Base:AddInput(idx, info)
+	info = info or {}
+	local i = setmetatable({ Type = "Input", Value = info.Default or "", Callback = info.Callback, Changed = {} }, Element)
+	local hasText = info.Text ~= nil
+	local row = self:_row(hasText and 36 or 18)
+	if hasText then text(row, info.Text, { Size = UDim2.new(1, 0, 0, 14) }) end
+	local tb = create("TextBox", {
+		BackgroundColor3 = C.Input, BorderSizePixel = 0, Position = UDim2.fromOffset(0, hasText and 17 or 0), Size = UDim2.new(1, 0, 0, 18),
+		Font = Library.Font, TextSize = Library.TextSize, TextColor3 = C.TextHi, PlaceholderText = info.Placeholder or "",
+		PlaceholderColor3 = C.TextDim, ClearTextOnFocus = false, Text = i.Value, TextXAlignment = Enum.TextXAlignment.Left,
+	}, row)
+	create("UIStroke", { Color = C.Border, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, tb)
+	create("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, tb)
+	function i:SetValue(v)
+		self.Value = v
+		tb.Text = v
+		fire(self, v)
+	end
+	local function push()
+		if info.Numeric then tb.Text = tb.Text:gsub("[^%d%.%-]", "") end
+		i.Value = tb.Text
+		fire(i, tb.Text)
+	end
+	if info.Finished then connect(tb.FocusLost, push) else connect(tb:GetPropertyChangedSignal("Text"), push) end
+	Library.Options[idx] = i
+	return i
+end
+
+function Base:AddButton(a, b)
+	local info = type(a) == "table" and a or { Text = a, Func = b }
+	local btn = { Type = "Button" }
+	local row = self:_row(18)
+	local tb = create("TextButton", {
+		BackgroundColor3 = C.Header, BorderSizePixel = 0, AutoButtonColor = false, Size = UDim2.fromScale(1, 1),
+		Font = Library.Font, TextSize = Library.TextSize, Text = info.Text or "Button", TextColor3 = C.Text,
+	}, row)
+	create("UIStroke", { Color = C.Border, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, tb)
+	connect(tb.MouseEnter, function() tb.TextColor3 = C.TextHi end)
+	connect(tb.MouseLeave, function() tb.TextColor3 = C.Text end)
+	local armed = false
+	connect(tb.MouseButton1Click, function()
+		if info.DoubleClick and not armed then
+			armed = true
+			local old = tb.Text
+			tb.Text = "Are you sure?"
+			task.delay(0.75, function() armed = false; tb.Text = info.Text or old end)
+			return
+		end
+		armed = false
+		if info.Func then task.spawn(info.Func) end
+	end)
+	function btn:SetText(s) info.Text = s; tb.Text = s end
+	return btn
+end
+
+function Base:AddDivider()
+	local row = self:_row(8)
+	box(row, { Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = C.Border })
+end
+
+function Base:AddBlank(n)
+	self:_row(n or 6)
+end
+
+--// collapsible header (reference skin) ---------------------------------------
+function Base:AddSection(name, open)
+	local wrap = create("Frame", {
+		BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 16), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = self:_order(),
+	}, self.Container)
+	create("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, wrap)
+	create("UIPadding", { PaddingLeft = UDim.new(0, 15), PaddingRight = UDim.new(0, 15) }, wrap)
+	local head = create("TextButton", { BackgroundColor3 = C.Header, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 16), Text = "", AutoButtonColor = false, LayoutOrder = 1 }, wrap)
+	create("UIStroke", { Color = Color3.fromRGB(28, 28, 28), ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, head)
+	text(head, name, { Position = UDim2.fromOffset(7, 0), Size = UDim2.new(1, -24, 1, 0), TextColor3 = C.Text })
+	local arrow = text(head, "^", { Position = UDim2.new(1, -18, 0, 0), Size = UDim2.fromOffset(12, 16), TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = C.Text })
+	local body = create("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 2 }, wrap)
+	create("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, body)
+	local isOpen = open ~= false
+	arrow.Rotation = isOpen and 0 or 180
+	body.Visible = isOpen
+	connect(head.MouseButton1Click, function()
+		isOpen = not isOpen
+		body.Visible = isOpen
+		arrow.Rotation = isOpen and 0 or 180
+	end)
+	return setmetatable({ Container = body, Gui = self.Gui, Options = self.Options }, Base)
+end
+
+--// scroll container ---------------------------------------------------------
+local function makeScroll(parent, pos, size)
+	local sf = create("ScrollingFrame", {
+		BackgroundTransparency = 1, BorderSizePixel = 0, Position = pos, Size = size, CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2, ScrollingDirection = Enum.ScrollingDirection.Y,
+		TopImage = "rbxasset://textures/ui/Scroll/scroll-middle.png", MidImage = "rbxasset://textures/ui/Scroll/scroll-middle.png",
+		BottomImage = "rbxasset://textures/ui/Scroll/scroll-middle.png",
+	}, parent)
+	accent(sf, "ScrollBarImageColor3")
+	local layout = create("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, sf)
+	create("UIPadding", { PaddingLeft = UDim.new(0, 15), PaddingRight = UDim.new(0, 15), PaddingTop = UDim.new(0, 12), PaddingBottom = UDim.new(0, 8) }, sf)
+	return sf, layout
+end
+
+--// columns / groupboxes / tabboxes ------------------------------------------
+local Column = {}
+Column.__index = Column
+
+function Column:Relayout()
+	local colH = Library._colH
+	local used, n = 0, #self.Groups
+	for i, g in ipairs(self.Groups) do
+		local want = g:GetHeight()
+		local remaining = colH - used
+		local h
+		if i == n then h = remaining
+		else h = math.min(want, math.max(remaining - (n - i) * 60, 60)) end
+		h = math.max(h, 40)
+		g.Frame.Position = UDim2.fromOffset(0, used)
+		g.Frame.Size = UDim2.new(1, 0, 0, h)
+		used += h + 8
+	end
+end
+
+function Column:AddGroupbox(name)
+	local gb = setmetatable({ Gui = Library.Gui, Options = Library.Options }, Base)
+	local f = box(self.Frame, { BackgroundColor3 = C.Panel }, C.Border)
+	text(f, name, { Position = UDim2.fromOffset(5, 0), Size = UDim2.new(1, -10, 0, 19), TextColor3 = C.TextDim })
+	box(f, { Position = UDim2.fromOffset(0, 19), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = C.Border })
+	local sf, layout = makeScroll(f, UDim2.fromOffset(0, 20), UDim2.new(1, 0, 1, -22))
+	gb.Frame, gb.Container = f, sf
+	function gb:GetHeight() return layout.AbsoluteContentSize.Y + 12 + 8 + 22 end
+	connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function() self:Relayout() end)
+	table.insert(self.Groups, gb)
+	self:Relayout()
+	return gb
+end
+
+function Column:AddTabbox()
+	local tb = { Tabs = {}, Gui = Library.Gui }
+	local f = box(self.Frame, { BackgroundColor3 = C.Panel }, C.Border)
+	local head = create("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 20) }, f)
+	box(f, { Position = UDim2.fromOffset(0, 20), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = C.Border })
+	tb.Frame = f
+	local col = self
+	function tb:GetHeight()
+		local cur = self.Current
+		return (cur and cur.Layout.AbsoluteContentSize.Y or 0) + 12 + 8 + 24
+	end
+	function tb:Select(tab)
+		self.Current = tab
+		for _, t in ipairs(self.Tabs) do
+			local on = t == tab
+			t.Scroll.Visible = on
+			t.Button.TextColor3 = on and Library.Accent or C.TextDim
+			t.Line.Visible = on
+		end
+		col:Relayout()
+	end
+	function tb:AddTab(name)
+		local tab = setmetatable({ Gui = Library.Gui, Options = Library.Options }, Base)
+		local sf, layout = makeScroll(f, UDim2.fromOffset(0, 22), UDim2.new(1, 0, 1, -24))
+		sf.Visible = false
+		tab.Scroll, tab.Layout, tab.Container = sf, layout, sf
+		tab.Button = create("TextButton", {
+			BackgroundTransparency = 1, Text = name, Font = Library.Font, TextSize = Library.TextSize, TextColor3 = C.TextDim,
+			Size = UDim2.fromScale(1, 1), AutoButtonColor = false,
+		}, head)
+		tab.Line = box(tab.Button, { Position = UDim2.new(0, 0, 1, -1), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = Library.Accent, Visible = false })
+		accent(tab.Line, "BackgroundColor3")
+		table.insert(self.Tabs, tab)
+		local n = #self.Tabs
+		for i, t in ipairs(self.Tabs) do
+			t.Button.Size = UDim2.new(1 / n, 0, 1, 0)
+			t.Button.Position = UDim2.new((i - 1) / n, 0, 0, 0)
+		end
+		connect(tab.Button.MouseButton1Click, function() self:Select(tab) end)
+		connect(layout:GetPropertyChangedSignal("AbsoluteContentSize"), function() col:Relayout() end)
+		if n == 1 then self:Select(tab) end
+		return tab
+	end
+	table.insert(self.Groups, tb)
+	self:Relayout()
+	return tb
+end
+
+local function newColumn(parent, side)
+	local col = setmetatable({ Groups = {} }, Column)
+	col.Frame = create("Frame", {
+		BackgroundTransparency = 1,
+		Position = side == "Left" and UDim2.new() or UDim2.new(0.5, 6, 0, 0),
+		Size = UDim2.new(0.5, -6, 1, 0),
+	}, parent)
+	return col
+end
+
+--// page API (shared by Tab and SubTab) --------------------------------------
+local PageAPI = {}
+PageAPI.__index = PageAPI
+function PageAPI:AddLeftGroupbox(n) return self:_GetPage().Left:AddGroupbox(n) end
+function PageAPI:AddRightGroupbox(n) return self:_GetPage().Right:AddGroupbox(n) end
+function PageAPI:AddLeftTabbox() return self:_GetPage().Left:AddTabbox() end
+function PageAPI:AddRightTabbox() return self:_GetPage().Right:AddTabbox() end
+
+local TabAPI = setmetatable({}, { __index = PageAPI })
+TabAPI.__index = TabAPI
+local SubAPI = setmetatable({}, { __index = PageAPI })
+SubAPI.__index = SubAPI
+
+function SubAPI:_GetPage() return self.Page end
+function TabAPI:_GetPage()
+	if not self.Default then
+		self.Default = self:_NewPage()
+		self.Default.Content.Visible = not self.HasSide
+	end
+	return self.Default
+end
+
+function TabAPI:_Layout()
+	for _, p in ipairs(self.Pages) do
+		if self.HasSide then
+			p.Content.Position = UDim2.fromOffset(112, 0)
+			p.Content.Size = UDim2.new(1, -121, 1, 0)
+		else
+			p.Content.Position = UDim2.fromOffset(9, 0)
+			p.Content.Size = UDim2.new(1, -18, 1, 0)
+		end
+	end
+end
+
+function TabAPI:_NewPage()
+	local content = create("Frame", { BackgroundTransparency = 1, Visible = false }, self.Root)
+	local page = { Content = content, Left = newColumn(content, "Left"), Right = newColumn(content, "Right") }
+	table.insert(self.Pages, page)
+	self:_Layout()
+	return page
+end
+
+function TabAPI:SelectSubTab(sub)
+	self.CurrentSub = sub
+	for _, s in ipairs(self.Subs) do
+		local on = s == sub
+		s.Page.Content.Visible = on
+		s.Button.TextColor3 = on and C.TextHi or C.TextDim
+		s.Button.BackgroundTransparency = on and 0 or 1
+		s.Bar.Visible = on
+	end
+end
+
+function TabAPI:AddSubTab(name)
+	self.HasSide = true
+	self.Sidebar.Visible = true
+	if self.Default then self.Default.Content.Visible = false end
+	local sub = setmetatable({ Tab = self, Page = self:_NewPage() }, SubAPI)
+	sub.Button = create("TextButton", {
+		BackgroundColor3 = Color3.fromRGB(19, 19, 19), BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 20),
+		Text = name, Font = Library.Font, TextSize = Library.TextSize, TextColor3 = C.TextDim, TextXAlignment = Enum.TextXAlignment.Left,
+		AutoButtonColor = false, LayoutOrder = #self.Subs + 1,
+	}, self.Sidebar)
+	create("UIPadding", { PaddingLeft = UDim.new(0, 10) }, sub.Button)
+	sub.Bar = box(sub.Button, { Position = UDim2.fromOffset(-10, 0), Size = UDim2.fromOffset(1, 20), BackgroundColor3 = Library.Accent, Visible = false })
+	accent(sub.Bar, "BackgroundColor3")
+	table.insert(self.Subs, sub)
+	connect(sub.Button.MouseButton1Click, function() self:SelectSubTab(sub) end)
+	self:_Layout()
+	if #self.Subs == 1 then self:SelectSubTab(sub) end
+	return sub
+end
+
+--// window -------------------------------------------------------------------
+function Library:CreateWindow(cfg)
+	cfg = cfg or {}
+	local parent = (gethui and gethui()) or Players.LocalPlayer:WaitForChild("PlayerGui")
+	local gui = create("ScreenGui", { Name = "LinoriaStyleUI", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 1000 }, parent)
+	self.Gui = gui
+
+	local size = cfg.Size or UDim2.fromOffset(580, 400)
+	self._colH = size.Y.Offset - 69
+
+	local main = box(gui, {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = cfg.Center == false and UDim2.fromOffset(340, 260) or UDim2.fromScale(0.5, 0.5),
+		Size = size, BackgroundColor3 = C.Window, Visible = cfg.AutoShow ~= false,
+	}, C.Border)
+	self.Main = main
+	self.Modal = create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(), Modal = main.Visible }, main)
+
+	self.NotifyHolder = create("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 40), Size = UDim2.fromOffset(300, 400) }, gui)
+	create("UIListLayout", { Padding = UDim.new(0, 5) }, self.NotifyHolder)
+
+	local Window = {}
+
+	-- drag
+	local top = create("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 23) }, main)
+	do
+		local start, origin, dragging
+		connect(top.InputBegan, function(i)
+			if i.UserInputType == Enum.UserInputType.MouseButton1 then
+				dragging, start, origin = true, mouse(), main.Position
+				self:_closePopup()
+			end
+		end)
+		connect(UserInputService.InputChanged, function(i)
+			if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+				local d = mouse() - start
+				main.Position = UDim2.new(origin.X.Scale, origin.X.Offset + d.X, origin.Y.Scale, origin.Y.Offset + d.Y)
+			end
+		end)
+		connect(UserInputService.InputEnded, function(i)
+			if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+		end)
+	end
+
+	-- title, underline, tab row
+	local title = cfg.Title or "name"
+	local tl = text(main, title, { Position = UDim2.fromOffset(7, 4), Size = UDim2.fromOffset(measure(title) + 4, 16) })
+	accent(tl, "TextColor3")
+
+	local underline = box(main, { Position = UDim2.fromOffset(0, 23), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = self.Accent })
+	accent(underline, "BackgroundColor3")
+	create("UIGradient", { Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.8, 0.1), NumberSequenceKeypoint.new(1, 1),
+	}) }, underline)
+
+	local tabHolder = create("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(math.max(102, measure(title) + 24), 3), Size = UDim2.new(1, -110, 0, 21) }, main)
+	create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, tabHolder)
+
+	local pages = create("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 33), Size = UDim2.new(1, 0, 0, self._colH) }, main)
+
+	-- footer
+	local bl = text(main, "Build:", { Position = UDim2.new(0, 7, 1, -19), Size = UDim2.fromOffset(36, 16), TextColor3 = C.TextDim })
+	local bv = text(main, cfg.Build or "Live", { Position = UDim2.new(0, 7 + measure("Build:"), 1, -19), Size = UDim2.fromOffset(80, 16) })
+	accent(bv, "TextColor3")
+	local ft = text(main, cfg.Footer or "sexy", { Position = UDim2.new(1, -108, 1, -19), Size = UDim2.fromOffset(100, 16), TextXAlignment = Enum.TextXAlignment.Right })
+	accent(ft, "TextColor3")
+
+	local tabs, current = {}, nil
+	function Window:SelectTab(tab)
+		if current then
+			current.Root.Visible = false
+			current.Button.TextColor3 = C.TextDim
+			for _, l in ipairs(current.Lines) do l.Visible = false end
+		end
+		current = tab
+		tab.Root.Visible = true
+		tab.Button.TextColor3 = Library.Accent
+		for _, l in ipairs(tab.Lines) do l.Visible = true end
+		Library:_closePopup()
+	end
+
+	function Window:AddTab(name)
+		local tab = setmetatable({ Name = name, HasSide = false, Subs = {}, Pages = {}, Lines = {} }, TabAPI)
+		local holder = create("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(measure(name) + 16, 21), LayoutOrder = #tabs + 1 }, tabHolder)
+		for _, g in ipairs({
+			{ UDim2.new(), UDim2.new(1, 0, 0, 1) },
+			{ UDim2.new(), UDim2.new(0, 1, 1, 0) },
+			{ UDim2.new(1, -1, 0, 0), UDim2.new(0, 1, 1, 0) },
+		}) do
+			local l = box(holder, { Position = g[1], Size = g[2], BackgroundColor3 = Library.Accent, Visible = false })
+			accent(l, "BackgroundColor3")
+			table.insert(tab.Lines, l)
+		end
+		tab.Button = create("TextButton", {
+			BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Text = name, Font = Library.Font, TextSize = Library.TextSize,
+			TextColor3 = C.TextDim, AutoButtonColor = false,
+		}, holder)
+
+		tab.Root = create("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Visible = false }, pages)
+		tab.Sidebar = box(tab.Root, { Position = UDim2.fromOffset(9, 0), Size = UDim2.new(0, 94, 1, 0), BackgroundColor3 = C.Panel, Visible = false }, C.Border)
+		create("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, tab.Sidebar)
+		create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 0) }, tab.Sidebar)
+
+		connect(tab.Button.MouseButton1Click, function() Window:SelectTab(tab) end)
+		table.insert(tabs, tab)
+		if #tabs == 1 then Window:SelectTab(tab) end
+		return tab
+	end
+
+	-- global input: menu key + click-away for popups
+	connect(UserInputService.InputBegan, function(i, gp)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 then
+			local p = self._popup
+			if p then
+				local m = mouse()
+				if not inside(p.Frame, m) and not inside(p.Opener, m) then self:_closePopup() end
+			end
+		end
+		if gp then return end
+		local tk = self.ToggleKeybind
+		if tk then
+			local hit
+			if typeof(tk) == "EnumItem" then hit = i.KeyCode == tk
+			elseif type(tk) == "table" then hit = keyName(i) == tk.Value
+			elseif type(tk) == "string" then hit = keyName(i) == tk end
+			if hit then self:Toggle() end
+		end
+	end)
+
+	return Window
+end
+
+return Library
