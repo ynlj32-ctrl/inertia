@@ -30,8 +30,8 @@ genv.Options = Library.Options
 
 local C = {
 	Window = Color3.fromRGB(10, 10, 10),
-	Border = Color3.fromRGB(30, 30, 30),
-	Panel = Color3.fromRGB(13, 13, 13),
+	Border = Color3.fromRGB(36, 34, 36),
+	Panel = Color3.fromRGB(12, 11, 12),
 	Header = Color3.fromRGB(21, 21, 21),
 	Input = Color3.fromRGB(20, 20, 20),
 	Off = Color3.fromRGB(28, 28, 28),
@@ -412,7 +412,7 @@ function Base:AddToggle(idx, info)
 	local lbl = text(row, info.Text or idx, { Position = UDim2.fromOffset(16, 0), Size = UDim2.new(1, -16, 1, 0), TextColor3 = C.TextDim })
 	local function render()
 		ind.BackgroundColor3 = t.Value and Library.Accent or C.Off
-		lbl.TextColor3 = t.Value and C.TextHi or C.TextDim
+		lbl.TextColor3 = t.Value and Color3.new(1, 1, 1) or C.TextDim
 	end
 	Library:_bindAccent(render)
 	function t:SetValue(v)
@@ -672,26 +672,36 @@ local Column = {}
 Column.__index = Column
 
 function Column:Relayout()
-	local colH = Library._colH
-	local used, n = 0, #self.Groups
+	-- Groupboxes always fill the column (like the reference): each gets its content height, but never less
+	-- than an equal share of the column; whatever is left over goes to the last box. Overflow scrolls inside.
+	local GAP = 8
+	local n = #self.Groups
+	if n == 0 then return end
+	local avail = Library._colH - GAP * (n - 1)
+	local share = math.floor(avail / n)
+	local heights, total = {}, 0
 	for i, g in ipairs(self.Groups) do
-		local want = g:GetHeight()
-		local remaining = colH - used
-		local h
-		if i == n then h = remaining
-		else h = math.min(want, math.max(remaining - (n - i) * 60, 60)) end
-		h = math.max(h, 40)
+		heights[i] = math.min(g:GetHeight(), share)
+		total += heights[i]
+	end
+	local leftover = avail - total
+	for i, g in ipairs(self.Groups) do
+		local extra = math.min(g:GetHeight() - heights[i], leftover)
+		if extra > 0 then heights[i] += extra; leftover -= extra end
+	end
+	heights[n] += leftover
+	local used = 0
+	for i, g in ipairs(self.Groups) do
 		g.Frame.Position = UDim2.fromOffset(0, used)
-		g.Frame.Size = UDim2.new(1, 0, 0, h)
-		used += h + 8
+		g.Frame.Size = UDim2.new(1, 0, 0, heights[i])
+		used += heights[i] + GAP
 	end
 end
 
 function Column:AddGroupbox(name)
 	local gb = setmetatable({ Gui = Library.Gui, Options = Library.Options }, Base)
 	local f = box(self.Frame, { BackgroundColor3 = C.Panel }, C.Border)
-	text(f, name, { Position = UDim2.fromOffset(5, 0), Size = UDim2.new(1, -10, 0, 19), TextColor3 = C.TextDim })
-	box(f, { Position = UDim2.fromOffset(0, 19), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = C.Border })
+	text(f, name, { Position = UDim2.fromOffset(6, 0), Size = UDim2.new(1, -12, 0, 20), TextColor3 = C.TextDim })
 	local sf, layout = makeScroll(f, UDim2.fromOffset(0, 20), UDim2.new(1, 0, 1, -22))
 	gb.Frame, gb.Container = f, sf
 	function gb:GetHeight() return layout.AbsoluteContentSize.Y + 12 + 8 + 22 end
@@ -806,8 +816,8 @@ function TabAPI:SelectSubTab(sub)
 	for _, s in ipairs(self.Subs) do
 		local on = s == sub
 		s.Page.Content.Visible = on
-		s.Button.TextColor3 = on and C.TextHi or C.TextDim
-		s.Button.BackgroundTransparency = on and 0 or 1
+		s.Button.TextColor3 = on and Library.Accent or C.TextDim
+		s.Button.BackgroundTransparency = 1
 		s.Bar.Visible = on
 	end
 end
