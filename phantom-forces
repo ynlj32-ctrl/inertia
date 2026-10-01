@@ -10,8 +10,21 @@ if getfflag and (string.lower(tostring(getfflag("DebugRunParallelLuaOnMainThread
 
 	-- Module Loader
 
+	repeat task.wait() until getrenv().shared and getrenv().shared.require
 	local renv = getrenv()
-	local requireCache = getupvalue(renv.shared.require, 1)["_cache"]
+
+	local requireUpvalue
+	repeat
+		task.wait()
+		local ok, result = pcall(function()
+			return getupvalue(renv.shared.require, 1)
+		end)
+		if ok and result and result["_cache"] then
+			requireUpvalue = result
+		end
+	until requireUpvalue
+
+	local requireCache = requireUpvalue["_cache"]
 
 	local function gameRequire(name)
 		repeat task.wait() until requireCache[name] and requireCache[name].module
