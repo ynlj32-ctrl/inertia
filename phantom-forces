@@ -35,8 +35,19 @@ if getfflag and (string.lower(tostring(getfflag("DebugRunParallelLuaOnMainThread
 	local BulletObject = gameRequire("BulletObject")
 	local WeaponControllerInterface = gameRequire("WeaponControllerInterface")
 	local RepInterface = gameRequire("ReplicationInterface")
-    local RecoilSprings = gameRequire("RecoilSprings")
-    local FirearmObject = gameRequire("FirearmObject")
+	local RecoilSprings = gameRequire("RecoilSprings")
+	local FirearmObject = gameRequire("FirearmObject")
+	local CharacterObject = gameRequire("CharacterObject")
+	local CharacterInterface = gameRequire("CharacterInterface")
+	local MainCameraObject = gameRequire("MainCameraObject")
+	local HudScopeInterface = gameRequire("HudScopeInterface")
+	local UnscaledScreenGui = gameRequire("UnscaledScreenGui")
+	local ScreenCull = gameRequire("ScreenCull")
+	local ThirdPersonObject = gameRequire("ThirdPersonObject")
+	local ReplicationObject = gameRequire("ReplicationObject")
+	local CameraInterface = gameRequire("CameraInterface")
+	local PlayerDataClient = gameRequire("PlayerDataClientInterface")
+	local PlayerDataUtils = gameRequire("PlayerDataUtils")
 
 	local PhysicsIgnore = GetCamera():FindFirstChild("PhysicsIgnore") or Instance.new("Folder")
 
@@ -88,11 +99,36 @@ if getfflag and (string.lower(tostring(getfflag("DebugRunParallelLuaOnMainThread
 	RecoilBox:AddToggle("NoSpread", { Text = "No Spread", Default = false })
 	RecoilBox:AddToggle("NoWalkSway", { Text = "No Walk Sway", Default = false })
 	RecoilBox:AddToggle("NoGunSway", { Text = "No Gun Sway", Default = false })
+	RecoilBox:AddToggle("NoCameraSway", { Text = "No Camera Sway", Default = false })
+	RecoilBox:AddToggle("NoCameraBob", { Text = "No Camera Bob", Default = false })
+	RecoilBox:AddToggle("NoSniperScope", { Text = "No Sniper Scope", Default = false })
 	RecoilBox:AddToggle("InstantReload", { Text = "Instant Reload", Default = false })
+	RecoilBox:AddToggle("RapidFire", { Text = "Rapid Fire", Default = false })
+	RecoilBox:AddToggle("InfiniteAmmo", { Text = "Infinite Ammo", Default = false })
 
-	local CrosshairBox = Tabs.GunMods:AddRightGroupbox("Crosshair")
-	CrosshairBox:AddToggle("SmallCrosshair", { Text = "Small Crosshair", Default = false })
-	CrosshairBox:AddToggle("NoCrosshair", { Text = "No Crosshair", Default = false })
+	local AntiAimBox = Tabs.GunMods:AddLeftGroupbox("Anti Aim")
+	AntiAimBox:AddToggle("AntiAim", { Text = "Enabled", Default = false })
+	AntiAimBox:AddToggle("AAPitch", { Text = "Pitch", Default = false })
+	AntiAimBox:AddSlider("AAPitchAmount", { Text = "Pitch Angle", Default = 180, Min = -180, Max = 180, Rounding = 0 })
+	AntiAimBox:AddToggle("AAYaw", { Text = "Yaw", Default = false })
+	AntiAimBox:AddSlider("AAYawAmount", { Text = "Yaw Angle", Default = 180, Min = -180, Max = 180, Rounding = 0 })
+	AntiAimBox:AddToggle("AASpinBot", { Text = "Spin Bot", Default = false })
+	AntiAimBox:AddSlider("AASpinSpeed", { Text = "Spin Speed", Default = 360, Min = 30, Max = 1080, Rounding = 0 })
+	AntiAimBox:AddToggle("FakeLag", { Text = "Fake Lag", Default = false })
+	AntiAimBox:AddSlider("FakeLagDistance", { Text = "Refresh Dist.", Default = 10, Min = 1, Max = 50, Rounding = 0 })
+	AntiAimBox:AddSlider("FakeLagRate", { Text = "Refresh Rate", Default = 0.5, Min = 0.1, Max = 2, Rounding = 1 })
+
+	local MovementBox = Tabs.GunMods:AddRightGroupbox("Movement")
+	MovementBox:AddToggle("NoFallDamage", { Text = "No Fall Damage", Default = false })
+	MovementBox:AddToggle("BunnyHop", { Text = "Bunny Hop", Default = false })
+	MovementBox:AddToggle("WalkSpeed", { Text = "Walk Speed", Default = false })
+	MovementBox:AddSlider("SetSpeed", { Text = "Speed", Default = 20, Min = 10, Max = 100, Rounding = 0 })
+	MovementBox:AddToggle("JumpPower", { Text = "Jump Power", Default = false })
+	MovementBox:AddSlider("HeightAddition", { Text = "Height", Default = 5, Min = 1, Max = 15, Rounding = 0 })
+
+	local ChatSpamBox = Tabs.GunMods:AddRightGroupbox("Chat Spam")
+	ChatSpamBox:AddToggle("ChatSpam", { Text = "Enabled", Default = false })
+	ChatSpamBox:AddSlider("ChatSpamDelay", { Text = "Delay (s)", Default = 3, Min = 2.5, Max = 10, Rounding = 1 })
 
 	-- Visuals
 
@@ -125,6 +161,14 @@ if getfflag and (string.lower(tostring(getfflag("DebugRunParallelLuaOnMainThread
 	WorldBox:AddToggle("NoFog", { Text = "No Fog", Default = false })
 	WorldBox:AddDropdown("Skybox", { Text = "Skybox", Values = {"Default", "Neptune", "Nebula", "Vaporwave", "Clouds", "Twilight", "Minecraft", "Chill", "Redshift", "Void"}, Default = "Default" })
 	WorldBox:AddSlider("Brightness", { Text = "Brightness", Default = 2, Min = 0, Max = 10, Rounding = 1 })
+
+	local ThirdPersonBox = Tabs.Visuals:AddRightGroupbox("Third Person")
+	ThirdPersonBox:AddToggle("ThirdPerson", { Text = "Enabled", Default = false })
+	ThirdPersonBox:AddSlider("TPOffsetX", { Text = "Offset X", Default = 2, Min = -10, Max = 10, Rounding = 1 })
+	ThirdPersonBox:AddSlider("TPOffsetY", { Text = "Offset Y", Default = 1, Min = -10, Max = 10, Rounding = 1 })
+	ThirdPersonBox:AddSlider("TPOffsetZ", { Text = "Offset Z", Default = 6, Min = 0, Max = 20, Rounding = 1 })
+	ThirdPersonBox:AddToggle("TPShowChar", { Text = "Show Character", Default = true })
+	ThirdPersonBox:AddToggle("TPCollision", { Text = "Camera Collision", Default = true })
 
 	-- Settings
 
@@ -355,6 +399,62 @@ if getfflag and (string.lower(tostring(getfflag("DebugRunParallelLuaOnMainThread
 		return bestPos, bestPart, bestPlayer
 	end
 
+	-- Anti Aim / Fake Lag
+
+	local AAStartTime = os.clock()
+	local FakeLagState = { lastPos = nil, lastTime = nil }
+
+	local function ApplyAntiAim(angles)
+		local x, y, z = angles.X, angles.Y, angles.Z
+		if Toggles.AAPitch.Value then
+			x = math.rad(Options.AAPitchAmount.Value) - math.pi / 2
+			x = math.clamp(x, -math.pi / 2, math.pi / 2)
+		end
+		if Toggles.AAYaw.Value then
+			y = math.rad(Options.AAYawAmount.Value)
+		end
+		if Toggles.AASpinBot.Value then
+			y = y + (os.clock() - AAStartTime) * math.rad(Options.AASpinSpeed.Value)
+		end
+		return Vector3.new(x, y, z)
+	end
+
+	-- Chat Spam
+
+	local TextChatService = game:GetService("TextChatService")
+	local GlobalChannel = nil
+	pcall(function()
+		GlobalChannel = TextChatService.TextChannels:WaitForChild("RBXGeneral", 5)
+	end)
+
+	local SpamMessages = {
+		"gg", "ez", "nice shot", "lol", "rekt", "imagine", "skill issue",
+		"too easy", "get good", "stay mad", "owned", "cope"
+	}
+	local lastSpamIndex = 0
+
+	local function ChatSpamLoop()
+		if Toggles.ChatSpam.Value and GlobalChannel then
+			local idx = math.random(1, #SpamMessages)
+			if #SpamMessages > 1 then
+				while idx == lastSpamIndex do
+					idx = math.random(1, #SpamMessages)
+				end
+			end
+			lastSpamIndex = idx
+			pcall(function()
+				GlobalChannel:SendAsync(SpamMessages[idx])
+			end)
+		end
+		task.delay(Options.ChatSpamDelay.Value, ChatSpamLoop)
+	end
+	task.delay(1, ChatSpamLoop)
+
+	-- Third Person State (forward declarations for network hook)
+	local fakeRepObject
+	local TPCurrentObj = nil
+	local TPNeedsSpawn = false
+
 	-- Hooks
 
 	local GRAVITY = Vector3.new(0, -196.2, 0)
@@ -392,6 +492,10 @@ if getfflag and (string.lower(tostring(getfflag("DebugRunParallelLuaOnMainThread
 			return
 		end
 
+		if name == "falldamage" and Toggles.NoFallDamage.Value then
+			return
+		end
+
 		if name == "newbullets" and Toggles.Aimbot.Value and Options.AimbotMode.Value == "Silent" and math.random(100) <= Options.Hitchance.Value then
 			local uniqueId, bulletData, time = ...
 
@@ -414,6 +518,44 @@ if getfflag and (string.lower(tostring(getfflag("DebugRunParallelLuaOnMainThread
 				end
 			end
 			return OldNetworkSend(entry, name, uniqueId, bulletData, time)
+		end
+
+		if name == "spawn" and Toggles.ThirdPerson.Value then
+			TPNeedsSpawn = true
+		end
+
+		if name == "equip" and Toggles.ThirdPerson.Value and TPCurrentObj then
+			local slot = ...
+			pcall(function()
+				fakeRepObject:setActiveIndex(slot)
+				if slot ~= 3 then
+					TPCurrentObj:equip(slot)
+				end
+			end)
+		end
+
+		if name == "playerupdate" then
+			local args = {...}
+
+			if Toggles.FakeLag.Value then
+				local pos = args[1]
+				if FakeLagState.lastPos and FakeLagState.lastTime then
+					if (pos - FakeLagState.lastPos).Magnitude < Options.FakeLagDistance.Value
+						and os.clock() - FakeLagState.lastTime < Options.FakeLagRate.Value then
+						return
+					end
+				end
+				FakeLagState.lastPos = pos
+				FakeLagState.lastTime = os.clock()
+			end
+
+			if Toggles.AntiAim.Value and args[2] then
+				args[2] = ApplyAntiAim(args[2])
+				if args[3] then
+					args[3] = args[2] * 0.99
+				end
+				return OldNetworkSend(entry, name, table.unpack(args))
+			end
 		end
 
 		return OldNetworkSend(entry, name, ...)
@@ -476,23 +618,96 @@ if getfflag and (string.lower(tostring(getfflag("DebugRunParallelLuaOnMainThread
 				rawset(data, "hipfirespreadrecover", 0.000001)
 			end
 
-			if Toggles.SmallCrosshair.Value then
-				rawset(data, "crosssize", 10)
-				rawset(data, "crossexpansion", 0)
-				rawset(data, "crossspeed", 100)
-				rawset(data, "crossdamper", 1)
+			if Toggles.RapidFire.Value then
+				rawset(data, "firerate", 1500)
 			end
 
-			if Toggles.NoCrosshair.Value then
-				rawset(data, "crosssize", 1000000000)
-				rawset(data, "crossexpansion", 0)
-				rawset(data, "crossspeed", 100)
-				rawset(data, "crossdamper", 1)
+			if Toggles.InfiniteAmmo.Value and reg._magCount ~= nil then
+				reg._magCount = data.magsize
 			end
+
             setreadonly(data, true)
 		end
 	end
 
+	-- Walk Speed / Jump Power
+
+	local OldSetBaseWalkSpeed = CharacterObject.setBaseWalkSpeed
+	local DefaultWalkSpeed = nil
+
+	CharacterObject.setBaseWalkSpeed = function(self, speed)
+		if not DefaultWalkSpeed then
+			DefaultWalkSpeed = speed
+		end
+		if Toggles.WalkSpeed.Value then
+			return OldSetBaseWalkSpeed(self, Options.SetSpeed.Value)
+		end
+		return OldSetBaseWalkSpeed(self, speed)
+	end
+
+	local OldJump = CharacterObject.jump
+	CharacterObject.jump = function(self, height, vaulting)
+		if Toggles.JumpPower.Value then
+			height = 4 + Options.HeightAddition.Value
+		end
+		return OldJump(self, height, vaulting)
+	end
+
+	-- Camera Sway / Bob
+
+	local OldCameraStep = MainCameraObject.step
+	MainCameraObject.step = function(self, dt)
+		if Toggles.NoCameraSway.Value then
+			OldCameraStep(self, 0)
+			self._lookDt = dt
+			return
+		end
+
+		if Toggles.NoCameraBob.Value then
+			local charObj = CharacterInterface.getCharacterObject()
+			if charObj then
+				local oldSpeed = charObj._speed
+				charObj._speed = 0
+				OldCameraStep(self, dt)
+				charObj._speed = oldSpeed
+				return
+			end
+		end
+
+		return OldCameraStep(self, dt)
+	end
+
+	-- No Sniper Scope
+
+	local ScopeGui = pcall(function()
+		return UnscaledScreenGui.getScreenGui().DisplayScope
+	end)
+
+	local OldUpdateScope = HudScopeInterface.updateScope
+	HudScopeInterface.updateScope = function(...)
+		if Toggles.NoSniperScope.Value then
+			local ok, gui = pcall(function()
+				return UnscaledScreenGui.getScreenGui().DisplayScope
+			end)
+			if ok and gui then
+				local front = gui:FindFirstChild("ImageFrontLayer")
+				local rear = gui:FindFirstChild("ImageRearLayer")
+				if front then front.ImageTransparency = 1 end
+				if rear then rear.ImageTransparency = 1 end
+
+				for _, layer in {front, rear} do
+					if not layer then continue end
+					for _, frame in layer:GetChildren() do
+						if frame.ClassName == "Frame" then
+							frame.Visible = false
+						end
+					end
+				end
+			end
+			return
+		end
+		return OldUpdateScope(...)
+	end
 
 	-- ESP
 
@@ -804,6 +1019,167 @@ if getfflag and (string.lower(tostring(getfflag("DebugRunParallelLuaOnMainThread
 		end
 	end
 
+	-- Third Person
+
+	local TPRayParams = RaycastParams.new()
+	TPRayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+	fakeRepObject = ReplicationObject.new(setmetatable({}, {
+		__index = function(_, index)
+			if index == "GetPropertyChangedSignal" then
+				return function(_, property)
+					return LocalPlayer:GetPropertyChangedSignal(property)
+				end
+			end
+			return LocalPlayer[index]
+		end,
+		__newindex = function(_, index, value)
+			LocalPlayer[index] = value
+		end
+	}))
+
+	local TPLastPos = nil
+	local TPDeltaTime = 0
+
+	local OldScreenCullStep = ScreenCull.step
+	ScreenCull.step = function(...)
+		OldScreenCullStep(...)
+
+		if not Toggles.ThirdPerson.Value then return end
+
+		local camera = GetCamera()
+		local ox = Options.TPOffsetX.Value
+		local oy = Options.TPOffsetY.Value
+		local oz = Options.TPOffsetZ.Value
+		local offset = Vector3.new(ox, oy, oz)
+
+		if Toggles.TPCollision.Value then
+			TPRayParams.FilterDescendantsInstances = {LocalPlayer.Character, camera, PhysicsIgnore}
+			local origin = camera.CFrame.Position
+			local target = (camera.CFrame * CFrame.new(offset)).Position
+			local dir = target - origin
+			local ray = workspace:Raycast(origin, dir, TPRayParams)
+			if ray then
+				local ratio = math.max(0, (ray.Position - origin).Magnitude - 0.5) / dir.Magnitude
+				camera.CFrame *= CFrame.new(offset * ratio)
+			else
+				camera.CFrame *= CFrame.new(offset)
+			end
+		else
+			camera.CFrame *= CFrame.new(offset)
+		end
+	end
+
+	local OldSetCharacterRender = ThirdPersonObject.setCharacterRender
+	function ThirdPersonObject:setCharacterRender(render)
+		if Toggles.ThirdPerson.Value then
+			if self._player == LocalPlayer then
+				return OldSetCharacterRender(self, true)
+			end
+			local cam = GetCamera()
+			return OldSetCharacterRender(self, render or (cam:WorldToViewportPoint(self._replicationObject._receivedPosition or self:getRootPart().Position).Z > 0))
+		end
+		return OldSetCharacterRender(self, render)
+	end
+
+	local function TPSpawnModel()
+		local classData = PlayerDataUtils.getClassData(PlayerDataClient.getPlayerData())
+		fakeRepObject._player = LocalPlayer
+		fakeRepObject:spawn(nil, classData[classData.curclass])
+		TPCurrentObj = fakeRepObject._thirdPersonObject
+		fakeRepObject:setActiveIndex(1)
+		for i = 1, 3 do
+			if fakeRepObject:getWeaponObjects()[i] then
+				TPCurrentObj:buildWeapon(i)
+			end
+		end
+	end
+
+	local function TPDespawnModel()
+		if TPCurrentObj then
+			fakeRepObject:despawn()
+			TPCurrentObj:Destroy()
+			TPCurrentObj = nil
+			TPLastPos = nil
+		end
+	end
+
+	local function TPUpdateModel(dt)
+		if not Toggles.ThirdPerson.Value then
+			if TPCurrentObj then TPDespawnModel() end
+			return
+		end
+
+		if not CharacterInterface.isAlive() then
+			if TPCurrentObj then TPDespawnModel() end
+			TPNeedsSpawn = true
+			return
+		end
+
+		local charObj = CharacterInterface.getCharacterObject()
+		if not charObj then return end
+		local rootPart = charObj:getRealRootPart()
+		if not rootPart then return end
+
+		TPDeltaTime = TPDeltaTime + dt
+
+		if TPNeedsSpawn or not TPCurrentObj then
+			TPSpawnModel()
+			TPNeedsSpawn = false
+		end
+
+		local position = rootPart.Position
+		TPLastPos = TPLastPos or position
+		local velocity = (position - TPLastPos) / math.max(TPDeltaTime, 0.001)
+
+		local angles = CameraInterface:getActiveCamera():getAngles()
+		local clockTime = os.clock()
+		local tickTime = tick()
+
+		fakeRepObject._posspring.t = position
+		fakeRepObject._posspring.p = position
+		fakeRepObject._lookangles.t = angles
+		fakeRepObject._lookangles.p = angles
+
+		fakeRepObject._smoothReplication:receive(clockTime, tickTime, {
+			t = tickTime,
+			position = position,
+			velocity = velocity,
+			angles = angles,
+			barrelAngles = Vector3.zero,
+			breakcount = 0
+		}, true)
+
+		fakeRepObject._updaterecieved = true
+		fakeRepObject._receivedPosition = position
+		fakeRepObject._receivedFrameTime = NetworkClient.getTime()
+		fakeRepObject._lastPacketTime = clockTime
+		fakeRepObject._lastBarrelAngles = Vector3.zero
+		fakeRepObject:step(3, true)
+
+		if TPCurrentObj then
+			TPCurrentObj.canRenderWeapon = true
+		end
+
+		TPLastPos = position
+		TPDeltaTime = 0
+
+		pcall(function()
+			local controller = WeaponControllerInterface:getActiveWeaponController()
+			if controller then
+				local weapon = controller:getActiveWeapon()
+				if weapon then
+					weapon._isHidden = false
+					weapon:hideModel()
+				end
+			end
+		end)
+	end
+
+	RunService.Heartbeat:Connect(function(dt)
+		TPUpdateModel(dt)
+	end)
+
 	-- Render Loop
 
 	RunService.RenderStepped:Connect(function()
@@ -873,7 +1249,15 @@ if getfflag and (string.lower(tostring(getfflag("DebugRunParallelLuaOnMainThread
 			PredDotOutline.Position = PredictedScreenPos
 		end
 
-		if Toggles.NoSpread.Value or Toggles.SmallCrosshair.Value or Toggles.NoCrosshair.Value then
+		if Toggles.BunnyHop.Value and CharacterInterface.isAlive() then
+			local charObj = CharacterInterface.getCharacterObject()
+			if charObj and charObj.canJump and charObj:canJump() then
+				charObj._lastJumpTime = 0
+				charObj:jump(4 + (Toggles.JumpPower.Value and Options.HeightAddition.Value or 0))
+			end
+		end
+
+		if Toggles.NoSpread.Value or Toggles.RapidFire.Value or Toggles.InfiniteAmmo.Value then
 			ApplyWeaponMods()
 		end
 	end)
