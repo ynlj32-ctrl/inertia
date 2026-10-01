@@ -1,0 +1,870 @@
+if getfflag and (string.lower(tostring(getfflag("DebugRunParallelLuaOnMainThread"))) == "true") then
+	local Players = game:GetService("Players")
+	local LocalPlayer = Players.LocalPlayer
+	local UserInputService = game:GetService("UserInputService")
+	local RunService = game:GetService("RunService")
+
+	local function GetCamera()
+		return workspace.CurrentCamera
+	end
+
+	-- Module Loader
+
+	local renv = getrenv()
+	local requireCache = getupvalue(renv.shared.require, 1)["_cache"]
+
+	local function gameRequire(name)
+		repeat task.wait() until requireCache[name] and requireCache[name].module
+		return requireCache[name].module
+	end
+
+	local NetworkClient = gameRequire("NetworkClient")
+	local BulletObject = gameRequire("BulletObject")
+	local WeaponControllerInterface = gameRequire("WeaponControllerInterface")
+	local RepInterface = gameRequire("ReplicationInterface")
+    local RecoilSprings = gameRequire("RecoilSprings")
+    local FirearmObject = gameRequire("FirearmObject")
+
+	local PhysicsIgnore = GetCamera():FindFirstChild("PhysicsIgnore") or Instance.new("Folder")
+
+	-- UI
+
+	local Library = loadstring(game:HttpGet(
+		"https://raw.githubusercontent.com/ynlj32-ctrl/inertia/refs/heads/main/ui", true
+	))()
+	local Toggles, Options = Library.Toggles, Library.Options
+
+	local Window = Library:CreateWindow({
+		Title = "Inertia",
+		Build = "Phantom Forces",
+		Center = true,
+		AutoShow = true,
+	})
+
+	local Tabs = {
+		Aimbot = Window:AddTab("Aimbot"),
+		GunMods = Window:AddTab("Misc"),
+		Visuals = Window:AddTab("Visuals"),
+		Settings = Window:AddTab("Settings"),
+	}
+
+	-- Aimbot
+
+	local AimbotBox = Tabs.Aimbot:AddLeftGroupbox("Silent Aim")
+	AimbotBox:AddToggle("Aimbot", { Text = "Enabled", Default = false })
+	AimbotBox:AddDropdown("AimbotMode", { Text = "Mode", Values = {"Silent", "Memory"}, Default = "Silent" })
+	AimbotBox:AddSlider("Hitchance", { Text = "Hitchance", Default = 100, Min = 1, Max = 100, Rounding = 0 })
+	AimbotBox:AddDropdown("HitPart", { Text = "Hit Part", Values = {"Head", "Torso", "HumanoidRootPart"}, Default = "Head" })
+	AimbotBox:AddToggle("TeamCheck", { Text = "Team Check", Default = true })
+	AimbotBox:AddToggle("VisibleCheck", { Text = "Visible Check", Default = false })
+
+	local FOVBox = Tabs.Aimbot:AddRightGroupbox("FOV")
+	FOVBox:AddSlider("FOVRadius", { Text = "FOV Radius", Default = 300, Min = 50, Max = 800, Rounding = 0 })
+	FOVBox:AddSlider("Smoothing", { Text = "Smoothing", Default = 5, Min = 1, Max = 20, Rounding = 0 })
+	FOVBox:AddToggle("Prediction", { Text = "Prediction", Default = false })
+	FOVBox:AddToggle("PredictionDot", { Text = "Prediction Dot", Default = false })
+		:AddColorPicker("PredictionDotColor", { Default = Color3.fromRGB(255, 0, 0), Title = "Dot Color" })
+	FOVBox:AddToggle("ScaleFOV", { Text = "Scale FOV on ADS", Default = true })
+	FOVBox:AddToggle("ShowFOV", { Text = "Show FOV Circle", Default = false })
+		:AddColorPicker("FOVColor", { Default = Color3.fromRGB(255, 255, 255), Title = "FOV Color" })
+
+	-- Gun Mods
+
+	local RecoilBox = Tabs.GunMods:AddLeftGroupbox("Weapon")
+	RecoilBox:AddToggle("NoRecoil", { Text = "No Recoil", Default = false })
+	RecoilBox:AddToggle("NoSpread", { Text = "No Spread", Default = false })
+	RecoilBox:AddToggle("NoWalkSway", { Text = "No Walk Sway", Default = false })
+	RecoilBox:AddToggle("NoGunSway", { Text = "No Gun Sway", Default = false })
+	RecoilBox:AddToggle("InstantReload", { Text = "Instant Reload", Default = false })
+
+	local CrosshairBox = Tabs.GunMods:AddRightGroupbox("Crosshair")
+	CrosshairBox:AddToggle("SmallCrosshair", { Text = "Small Crosshair", Default = false })
+	CrosshairBox:AddToggle("NoCrosshair", { Text = "No Crosshair", Default = false })
+
+	-- Visuals
+
+	local ESPBox = Tabs.Visuals:AddLeftGroupbox("ESP")
+	ESPBox:AddToggle("ESPBox", { Text = "Box", Default = false })
+		:AddColorPicker("ESPBoxColor", { Default = Color3.fromRGB(255, 255, 255), Title = "Box Color" })
+	ESPBox:AddToggle("ESPName", { Text = "Name", Default = false })
+		:AddColorPicker("ESPNameColor", { Default = Color3.fromRGB(255, 255, 255), Title = "Name Color" })
+	ESPBox:AddToggle("ESPWeapon", { Text = "Weapon", Default = false })
+		:AddColorPicker("ESPWeaponColor", { Default = Color3.fromRGB(200, 200, 200), Title = "Weapon Color" })
+	ESPBox:AddToggle("ESPDistance", { Text = "Distance", Default = false })
+		:AddColorPicker("ESPDistanceColor", { Default = Color3.fromRGB(200, 200, 200), Title = "Distance Color" })
+	ESPBox:AddToggle("ESPHealthBar", { Text = "Health Bar", Default = false })
+	ESPBox:AddToggle("Chams", { Text = "Chams", Default = false })
+		:AddColorPicker("ChamsFillColor", { Default = Color3.fromRGB(255, 0, 0), Title = "Fill Color" })
+		:AddColorPicker("ChamsOutlineColor", { Default = Color3.fromRGB(255, 255, 255), Title = "Outline Color" })
+	ESPBox:AddSlider("ChamsFillTransparency", { Text = "Chams Transparency", Default = 0.5, Min = 0, Max = 1, Rounding = 1 })
+	ESPBox:AddToggle("Tracers", { Text = "Tracers", Default = false })
+		:AddColorPicker("TracerColor", { Default = Color3.fromRGB(255, 255, 255), Title = "Tracer Color" })
+	ESPBox:AddDropdown("TracerOrigin", { Text = "Tracer Origin", Values = {"Bottom", "Center", "Mouse"}, Default = "Bottom" })
+
+	local ViewmodelBox = Tabs.Visuals:AddRightGroupbox("Viewmodel")
+	ViewmodelBox:AddToggle("ArmChams", { Text = "Arm Chams", Default = false })
+		:AddColorPicker("ArmChamsColor", { Default = Color3.fromRGB(138, 43, 226), Title = "Arm Color" })
+	ViewmodelBox:AddToggle("WeaponChams", { Text = "Weapon Chams", Default = false })
+		:AddColorPicker("WeaponChamsColor", { Default = Color3.fromRGB(0, 255, 255), Title = "Weapon Color" })
+
+	local WorldBox = Tabs.Visuals:AddRightGroupbox("World")
+	WorldBox:AddToggle("Fullbright", { Text = "Fullbright", Default = false })
+	WorldBox:AddToggle("NoFog", { Text = "No Fog", Default = false })
+	WorldBox:AddDropdown("Skybox", { Text = "Skybox", Values = {"Default", "Neptune", "Nebula", "Vaporwave", "Clouds", "Twilight", "Minecraft", "Chill", "Redshift", "Void"}, Default = "Default" })
+	WorldBox:AddSlider("Brightness", { Text = "Brightness", Default = 2, Min = 0, Max = 10, Rounding = 1 })
+
+	-- Settings
+
+	local MenuBox = Tabs.Settings:AddLeftGroupbox("Menu")
+	MenuBox:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", { Default = "RightControl", Mode = "Toggle", Text = "Menu" })
+	Library.ToggleKeybind = Options.MenuKeybind
+
+	-- FOV Circle
+
+	local FOVCircle = Drawing.new("Circle")
+	FOVCircle.Visible = false
+	FOVCircle.Radius = 300
+	FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+	FOVCircle.Thickness = 1
+	FOVCircle.Filled = false
+	FOVCircle.NumSides = 24
+	FOVCircle.ZIndex = 2
+
+	local FOVOutline = Drawing.new("Circle")
+	FOVOutline.Visible = false
+	FOVOutline.Radius = 300
+	FOVOutline.Color = Color3.fromRGB(0, 0, 0)
+	FOVOutline.Thickness = 1.5
+	FOVOutline.Filled = false
+	FOVOutline.NumSides = 24
+	FOVOutline.ZIndex = 1
+
+	
+	-- Prediction Dot
+
+	local PredDot = Drawing.new("Circle")
+	PredDot.Visible = false
+	PredDot.Radius = 1.5
+	PredDot.Filled = true
+	PredDot.Color = Color3.fromRGB(255, 0, 0)
+	PredDot.ZIndex = 4
+
+	local PredDotOutline = Drawing.new("Circle")
+	PredDotOutline.Visible = false
+	PredDotOutline.Radius = 2
+	PredDotOutline.Filled = true
+	PredDotOutline.Color = Color3.fromRGB(0, 0, 0)
+	PredDotOutline.ZIndex = 3
+
+	-- Trajectory Solver
+
+	local function solve(a, b, c, d, e)
+		if not a then
+			return
+		elseif a > -1e-10 and a < 1e-10 then
+			return solve(b, c, d, e)
+		else
+			if e then
+				local p = -b / (4 * a)
+				local q = (c + p * (3 * b + 6 * a * p)) / a
+				local r = (d + p * (2 * c + p * (3 * b + 4 * a * p))) / a
+				local s = (e + p * (d + p * (c + p * (b + a * p)))) / a
+				if r > -1e-10 and r < 1e-10 then
+					local r1, r2 = solve(1, q, s)
+					if not r2 or r2 < 0 then return end
+					local sq1 = math.sqrt(r1)
+					local sq2 = math.sqrt(r2)
+					return p - sq2, p - sq1, p + sq1, p + sq2
+				else
+					local v1, _, v3 = solve(1, 2 * q, q * q - 4 * s, -r * r)
+					local v = v3 or v1
+					local sv = math.sqrt(v)
+					local a1, a2 = solve(1, sv, (v + q - r / sv) / 2)
+					local b1, b2 = solve(1, -sv, (v + q + r / sv) / 2)
+					if a1 and b1 then return p + a1, p + a2, p + b1, p + b2
+					elseif a1 then return p + a1, p + a2
+					elseif b1 then return p + b1, p + b2 end
+				end
+			elseif d then
+				local p = -b / (3 * a)
+				local q = -(c + p * (2 * b + 3 * a * p)) / (3 * a)
+				local r = -(d + p * (c + p * (b + a * p))) / (2 * a)
+				local disc = r * r - q * q * q
+				local sd = math.sqrt(math.abs(disc))
+				if disc > 0 then
+					local u = r + sd
+					local v = r - sd
+					u = u < 0 and -((-u) ^ (1/3)) or u ^ (1/3)
+					v = v < 0 and -((-v) ^ (1/3)) or v ^ (1/3)
+					return p + u + v
+				else
+					local theta = math.atan2(sd, r) / 3
+					local m = 2 * math.sqrt(q)
+					return p - m * math.sin(theta + 0.5235987755982988), p + m * math.sin(theta - 0.5235987755982988), p + m * math.cos(theta)
+				end
+			elseif c then
+				local p = -b / (2 * a)
+				local disc = p * p - c / a
+				if disc < 0 then return end
+				local sd = math.sqrt(disc)
+				return p - sd, p + sd
+			elseif b then
+				return -b / a
+			end
+		end
+	end
+
+	local function PredictTrajectory(origin, accel, target, speed, targetVel)
+		local ld = target - origin
+		accel = -accel
+		targetVel = targetVel or Vector3.zero
+
+		local r1, r2, r3, r4 = solve(
+			accel:Dot(accel) * 0.25,
+			accel:Dot(targetVel),
+			accel:Dot(ld) + targetVel:Dot(targetVel) - speed * speed,
+			ld:Dot(targetVel) * 2,
+			ld:Dot(ld)
+		)
+
+		local t = (r1 and r1 > 0 and r1) or (r2 and r2 > 0 and r2) or (r3 and r3 > 0 and r3) or (r4 and r4 > 0 and r4)
+		if not t then return nil, nil end
+
+		local vel = (ld + targetVel * t + 0.5 * accel * t * t) / t
+		return vel, t
+	end
+
+	-- Movement Cache
+
+	local CACHE_SIZE = 15
+	local MoveCache = {}
+
+	local function UpdateMoveCache()
+		RepInterface.operateOnAllEntries(function(player, entry)
+			if not entry._isEnemy then return end
+			local tp = entry._thirdPersonObject
+			if not tp or not tp._head then return end
+
+			if not MoveCache[player] then
+				MoveCache[player] = {pos = {}, time = {}}
+			end
+
+			local c = MoveCache[player]
+			table.insert(c.pos, tp._head.Position)
+			table.insert(c.time, os.clock())
+
+			if #c.pos > CACHE_SIZE then
+				table.remove(c.pos, 1)
+				table.remove(c.time, 1)
+			end
+		end)
+	end
+
+	local function GetTargetVelocity(player)
+		local c = MoveCache[player]
+		if not c or #c.pos < 2 then return Vector3.zero end
+		local dt = c.time[#c.time] - c.time[1]
+		if dt < 0.01 then return Vector3.zero end
+		return (c.pos[#c.pos] - c.pos[1]) / dt
+	end
+
+	local function GetWeaponBulletData()
+		local ok, controller = pcall(function()
+			return WeaponControllerInterface:getActiveWeaponController()
+		end)
+		if not ok or not controller or not controller["_activeWeaponRegistry"] then return nil end
+		local reg = controller["_activeWeaponRegistry"][1]
+		if not reg then return nil end
+		return reg["_weaponData"] or reg["weaponData"]
+	end
+
+	-- FOV Scaling
+
+	local BASE_FOV = 70
+
+	local function GetScaledFOVRadius()
+		local radius = Options.FOVRadius.Value
+		if Toggles.ScaleFOV.Value then
+			radius = radius * (BASE_FOV / GetCamera().FieldOfView)
+		end
+		return radius
+	end
+
+	-- Target Finder
+
+	local PredictedScreenPos = nil
+
+	local RayParams = RaycastParams.new()
+	RayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+	local function GetClosestTarget()
+		local camera = GetCamera()
+		local mouse = UserInputService:GetMouseLocation()
+		local bestDist = GetScaledFOVRadius()
+		local bestPos = nil
+		local bestPart = nil
+		local bestPlayer = nil
+
+		if Toggles.VisibleCheck.Value then
+			RayParams.FilterDescendantsInstances = {LocalPlayer.Character, camera}
+		end
+
+		RepInterface.operateOnAllEntries(function(player, entry)
+			if not entry._isEnemy then return end
+
+			local thirdPerson = entry._thirdPersonObject
+			if not thirdPerson then return end
+
+			local character = thirdPerson._characterModelHash
+			if not character then return end
+
+			local part = character[Options.HitPart.Value]
+			if not part then return end
+
+			local screenPos, onScreen = camera:WorldToViewportPoint(part.Position)
+			if not onScreen or screenPos.Z <= 0 then return end
+
+			if Toggles.VisibleCheck.Value then
+				local origin = camera.CFrame.Position
+				local ray = workspace:Raycast(origin, part.Position - origin, RayParams)
+				if ray and not ray.Instance:IsDescendantOf(thirdPerson._characterModel or workspace) then return end
+			end
+
+			local dist = (Vector2.new(screenPos.X, screenPos.Y) - mouse).Magnitude
+			if dist < bestDist then
+				bestDist = dist
+				bestPos = part.Position
+				bestPart = part
+				bestPlayer = player
+			end
+		end)
+
+		return bestPos, bestPart, bestPlayer
+	end
+
+	-- Hooks
+
+	local GRAVITY = Vector3.new(0, -196.2, 0)
+
+	local OldBulletNew = BulletObject.new
+	BulletObject.new = newcclosure(function(...)
+		local args = {...}
+
+		if Toggles.Aimbot.Value and Options.AimbotMode.Value == "Silent" and args[1]["extra"] and math.random(100) <= Options.Hitchance.Value then
+			local target, _, targetPlayer = GetClosestTarget()
+			if target then
+				local wData = GetWeaponBulletData()
+				local bulletSpeed = wData and wData["bulletspeed"] or 2000
+				local accel = wData and wData["bulletacceleration"] or GRAVITY
+
+				if Toggles.Prediction.Value and targetPlayer then
+					local vel, _ = PredictTrajectory(args[1]["position"], accel, target, bulletSpeed, GetTargetVelocity(targetPlayer))
+					if vel then
+						args[1]["velocity"] = vel
+					else
+						args[1]["velocity"] = (target - args[1]["position"]).Unit * bulletSpeed
+					end
+				else
+					args[1]["velocity"] = (target - args[1]["position"]).Unit * bulletSpeed
+				end
+			end
+		end
+
+		return OldBulletNew(table.unpack(args))
+	end)
+
+	local OldNetworkSend = NetworkClient.send
+	NetworkClient.send = newcclosure(function(entry, name, ...)
+		if name == "flaguser" then
+			return
+		end
+
+		if name == "newbullets" and Toggles.Aimbot.Value and Options.AimbotMode.Value == "Silent" and math.random(100) <= Options.Hitchance.Value then
+			local uniqueId, bulletData, time = ...
+
+			for _, v in bulletData["bullets"] do
+				local target, _, targetPlayer = GetClosestTarget()
+				if target then
+					if Toggles.Prediction.Value and targetPlayer then
+						local wData = GetWeaponBulletData()
+						local bulletSpeed = wData and wData["bulletspeed"] or 2000
+						local accel = wData and wData["bulletacceleration"] or GRAVITY
+						local vel, _ = PredictTrajectory(bulletData["firepos"], accel, target, bulletSpeed, GetTargetVelocity(targetPlayer))
+						if vel then
+							v[1] = vel.Unit
+						else
+							v[1] = (target - bulletData["firepos"]).Unit
+						end
+					else
+						v[1] = (target - bulletData["firepos"]).Unit
+					end
+				end
+			end
+			return OldNetworkSend(entry, name, uniqueId, bulletData, time)
+		end
+
+		return OldNetworkSend(entry, name, ...)
+	end)
+
+	local OldApplyImpulse = RecoilSprings.applyImpulse
+	RecoilSprings.applyImpulse = newcclosure(function(...)
+		if Toggles.NoRecoil.Value then return end
+		return OldApplyImpulse(...)
+	end)
+
+	local OldReload = FirearmObject.reload
+	FirearmObject.reload = function(self)
+		if Toggles.InstantReload.Value and self._spareCount > 0 then
+			if self._spareCount >= self._weaponData.magsize then
+				self._spareCount = self._spareCount - (self._weaponData.magsize - self._magCount)
+				self._magCount = self._weaponData.magsize
+			else
+				self._magCount = self._spareCount
+				self._spareCount = 0
+			end
+			OldNetworkSend(NetworkClient, "reload")
+			return
+		end
+		return OldReload(self)
+	end
+
+	local OldComputeWalkSway = FirearmObject.computeWalkSway
+	FirearmObject.computeWalkSway = function(self, dy, dx)
+		if Toggles.NoWalkSway.Value then
+			dy = 0
+			dx = 0
+		end
+		return OldComputeWalkSway(self, dy, dx)
+	end
+
+	local OldComputeGunSway = FirearmObject.computeGunSway
+	FirearmObject.computeGunSway = function(...)
+		if Toggles.NoGunSway.Value then
+			return CFrame.identity
+		end
+		return OldComputeGunSway(...)
+	end
+
+	local function ApplyWeaponMods()
+		local ok, controller = pcall(function()
+			return WeaponControllerInterface:getActiveWeaponController()
+		end)
+		if not ok or not controller or not controller["_activeWeaponRegistry"] then return end
+
+		for _, reg in controller["_activeWeaponRegistry"] do
+			local data = reg["_weaponData"]
+			if not data then continue end
+
+            setreadonly(data, false)
+
+			if Toggles.NoSpread.Value then
+				rawset(data, "hipfirespread", 0.000001)
+				rawset(data, "hipfirestability", 0.000001)
+				rawset(data, "hipfirespreadrecover", 0.000001)
+			end
+
+			if Toggles.SmallCrosshair.Value then
+				rawset(data, "crosssize", 10)
+				rawset(data, "crossexpansion", 0)
+				rawset(data, "crossspeed", 100)
+				rawset(data, "crossdamper", 1)
+			end
+
+			if Toggles.NoCrosshair.Value then
+				rawset(data, "crosssize", 1000000000)
+				rawset(data, "crossexpansion", 0)
+				rawset(data, "crossspeed", 100)
+				rawset(data, "crossdamper", 1)
+			end
+            setreadonly(data, true)
+		end
+	end
+
+
+	-- ESP
+
+	local Paint = DrawingImmediate.GetPaint(1)
+
+	local ESPActive = function()
+		return Toggles.ESPBox.Value or Toggles.ESPName.Value or Toggles.ESPWeapon.Value or Toggles.ESPDistance.Value or Toggles.ESPHealthBar.Value or Toggles.Tracers.Value
+	end
+
+	Paint:Connect(function()
+		if not ESPActive() then return end
+
+		local ok, camera = pcall(GetCamera)
+		if not ok or not camera then return end
+		local camPos = camera.CFrame.Position
+
+		RepInterface.operateOnAllEntries(function(player, entry)
+			pcall(function()
+				if not entry._isEnemy or not entry:isAlive() then return end
+
+				local thirdPerson = entry._thirdPersonObject
+				if not thirdPerson then return end
+
+				local head = thirdPerson._head
+				local torso = thirdPerson._torso
+				if not head then return end
+
+				local anchor = torso or head
+				local headScreen, headVisible = camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
+				local feetScreen, feetVisible = camera:WorldToViewportPoint(anchor.Position - Vector3.new(0, 3, 0))
+				if not headVisible and not feetVisible then return end
+
+				local topY = headScreen.Y - 5
+				local botY = feetScreen.Y + 2
+				local height = botY - topY
+				if height < 8 then return end
+				local width = height * 0.45
+				local centerX = headScreen.X
+
+				if Toggles.ESPBox.Value then
+					local topLeft = Vector2.new(centerX - width / 2, topY)
+					local size = Vector2.new(width, height)
+
+					DrawingImmediate.Rectangle(
+						Vector2.new(topLeft.X - 1, topLeft.Y - 1),
+						Vector2.new(size.X + 2, size.Y + 2),
+						Color3.new(0, 0, 0), 1, 0, 1
+					)
+					DrawingImmediate.Rectangle(
+						Vector2.new(topLeft.X + 1, topLeft.Y + 1),
+						Vector2.new(size.X - 2, size.Y - 2),
+						Color3.new(0, 0, 0), 1, 0, 1
+					)
+					DrawingImmediate.Rectangle(topLeft, size, Options.ESPBoxColor.Value, 1, 0, 1)
+				end
+
+				if Toggles.ESPName.Value then
+					DrawingImmediate.OutlinedText(
+						Vector2.new(centerX, topY - 16),
+						0, 13,
+						Options.ESPNameColor.Value, 1,
+						Color3.new(0, 0, 0), 1,
+						player.DisplayName, true
+					)
+				end
+
+				if Toggles.ESPWeapon.Value then
+					local weaponName = thirdPerson._weaponName or "None"
+					DrawingImmediate.OutlinedText(
+						Vector2.new(centerX, botY + 2),
+						0, 13,
+						Options.ESPWeaponColor.Value, 1,
+						Color3.new(0, 0, 0), 1,
+						weaponName, true
+					)
+				end
+
+				if Toggles.ESPDistance.Value then
+					local dist = math.floor((head.Position - camPos).Magnitude)
+					local yOffset = Toggles.ESPWeapon.Value and 16 or 2
+					DrawingImmediate.OutlinedText(
+						Vector2.new(centerX, botY + yOffset),
+						0, 13,
+						Options.ESPDistanceColor.Value, 1,
+						Color3.new(0, 0, 0), 1,
+						dist .. "m", true
+					)
+				end
+
+				if Toggles.ESPHealthBar.Value then
+					local currentHealth, maxHealth = entry:getHealth()
+					local healthFrac = 1
+					if maxHealth and maxHealth > 0 then
+						healthFrac = (currentHealth or 0) / maxHealth
+					end
+
+					local barWidth = 3
+					local barX = centerX - width / 2 - barWidth - 2
+
+					DrawingImmediate.FilledRectangle(
+						Vector2.new(barX, topY),
+						Vector2.new(barWidth, height),
+						Color3.new(0, 0, 0), 0.5, 0
+					)
+
+					local fillHeight = height * healthFrac
+					local healthColor = Color3.fromRGB(255 * (1 - healthFrac), 255 * healthFrac, 0)
+					DrawingImmediate.FilledRectangle(
+						Vector2.new(barX, topY + (height - fillHeight)),
+						Vector2.new(barWidth, fillHeight),
+						healthColor, 1, 0
+					)
+
+					DrawingImmediate.Rectangle(
+						Vector2.new(barX, topY),
+						Vector2.new(barWidth, height),
+						Color3.new(0, 0, 0), 1, 0, 1
+					)
+				end
+
+				if Toggles.Tracers.Value then
+					local viewport = camera.ViewportSize
+					local origin = Options.TracerOrigin.Value
+					local fromPos
+					if origin == "Center" then
+						fromPos = Vector2.new(viewport.X / 2, viewport.Y / 2)
+					elseif origin == "Mouse" then
+						fromPos = UserInputService:GetMouseLocation()
+					else
+						fromPos = Vector2.new(viewport.X / 2, viewport.Y)
+					end
+
+					local toPos = Vector2.new(centerX, botY)
+					DrawingImmediate.Line(fromPos, toPos, Color3.new(0, 0, 0), 1, 3)
+					DrawingImmediate.Line(fromPos, toPos, Options.TracerColor.Value, 1, 1)
+				end
+			end)
+		end)
+	end)
+
+	-- Chams
+
+	local ChamsFolder = Instance.new("Folder")
+	ChamsFolder.Name = "InertiaChams"
+	ChamsFolder.Parent = game:GetService("CoreGui")
+
+	local ChamsHighlights = {}
+
+	local function UpdateChams()
+		if not Toggles.Chams.Value then
+			for _, hl in ChamsHighlights do
+				hl:Destroy()
+			end
+			table.clear(ChamsHighlights)
+			return
+		end
+
+		local alive = {}
+		RepInterface.operateOnAllEntries(function(player, entry)
+			if not entry._isEnemy or not entry:isAlive() then return end
+			local tp = entry._thirdPersonObject
+			if not tp or not tp._characterModel then return end
+
+			alive[player] = true
+
+			local hl = ChamsHighlights[player]
+			if not hl or not hl.Parent then
+				hl = Instance.new("Highlight")
+				hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+				hl.Parent = ChamsFolder
+				ChamsHighlights[player] = hl
+			end
+
+			hl.Adornee = tp._characterModel
+			hl.FillColor = Options.ChamsFillColor.Value
+			hl.OutlineColor = Options.ChamsOutlineColor.Value
+			hl.FillTransparency = Options.ChamsFillTransparency.Value
+			hl.OutlineTransparency = 0
+		end)
+
+		for player, hl in ChamsHighlights do
+			if not alive[player] then
+				hl:Destroy()
+				ChamsHighlights[player] = nil
+			end
+		end
+	end
+
+	-- World
+
+	local Lighting = game:GetService("Lighting")
+	local DefaultAmbient = Lighting.Ambient
+	local DefaultOutdoorAmbient = Lighting.OutdoorAmbient
+	local DefaultBrightness = Lighting.Brightness
+	local DefaultFogEnd = Lighting.FogEnd
+	local DefaultFogStart = Lighting.FogStart
+	local DefaultSkybox = nil
+
+	local sky = Lighting:FindFirstChildWhichIsA("Sky")
+	if sky then
+		DefaultSkybox = {
+			SkyboxBk = sky.SkyboxBk,
+			SkyboxDn = sky.SkyboxDn,
+			SkyboxFt = sky.SkyboxFt,
+			SkyboxLf = sky.SkyboxLf,
+			SkyboxRt = sky.SkyboxRt,
+			SkyboxUp = sky.SkyboxUp,
+		}
+	end
+
+	local SkyboxPresets = {
+		Neptune   = { "218955819", "218953419", "218954524", "218958493", "218957134", "218950090" },
+		Nebula    = { "159454299", "159454296", "159454293", "159454286", "159454300", "159454288" },
+		Vaporwave = { "1417494030", "1417494146", "1417494253", "1417494402", "1417494499", "1417494643" },
+		Clouds    = { "570557514", "570557775", "570557559", "570557620", "570557672", "570557727" },
+		Twilight  = { "264908339", "264907909", "264909420", "264909758", "264908886", "264907379" },
+		Minecraft = { "1876545003", "1876544331", "1876542941", "1876543392", "1876543764", "1876544642" },
+		Chill     = { "5084575798", "5084575916", "5103949679", "5103948542", "5103948784", "5084576400" },
+		Redshift  = { "401664839", "401664862", "401664960", "401664881", "401664901", "401664936" },
+	}
+
+	local function ApplySkybox(preset)
+		local sky = Lighting:FindFirstChildWhichIsA("Sky")
+		if preset == "Default" then
+			if sky and DefaultSkybox then
+				for k, v in DefaultSkybox do
+					sky[k] = v
+				end
+			end
+			return
+		end
+
+		if preset == "Void" then
+			if sky then sky:Destroy() end
+			return
+		end
+
+		local ids = SkyboxPresets[preset]
+		if not ids then return end
+
+		if not sky then
+			sky = Instance.new("Sky")
+			sky.Parent = Lighting
+		end
+		sky.SkyboxBk = "rbxassetid://" .. ids[1]
+		sky.SkyboxDn = "rbxassetid://" .. ids[2]
+		sky.SkyboxFt = "rbxassetid://" .. ids[3]
+		sky.SkyboxLf = "rbxassetid://" .. ids[4]
+		sky.SkyboxRt = "rbxassetid://" .. ids[5]
+		sky.SkyboxUp = "rbxassetid://" .. ids[6]
+	end
+
+	local lastSkybox = "Default"
+
+	local function UpdateWorld()
+		if Toggles.Fullbright.Value then
+			Lighting.Ambient = Color3.new(1, 1, 1)
+			Lighting.OutdoorAmbient = Color3.new(1, 1, 1)
+			Lighting.Brightness = Options.Brightness.Value
+		else
+			Lighting.Ambient = DefaultAmbient
+			Lighting.OutdoorAmbient = DefaultOutdoorAmbient
+			Lighting.Brightness = DefaultBrightness
+		end
+
+		if Toggles.NoFog.Value then
+			Lighting.FogEnd = 1e10
+			Lighting.FogStart = 1e10
+		else
+			Lighting.FogEnd = DefaultFogEnd
+			Lighting.FogStart = DefaultFogStart
+		end
+
+		local currentSkybox = Options.Skybox.Value
+		if currentSkybox ~= lastSkybox then
+			ApplySkybox(currentSkybox)
+			lastSkybox = currentSkybox
+		end
+	end
+
+	-- Viewmodel Chams
+
+	local VMOriginals = {}
+
+	local function UpdateViewmodelChams()
+		local camera = GetCamera()
+		for _, model in camera:GetChildren() do
+			if model.ClassName ~= "Model" then continue end
+
+			local isArm = model:FindFirstChild("Arm") ~= nil
+			local toggle = isArm and "ArmChams" or "WeaponChams"
+			local colorOpt = isArm and "ArmChamsColor" or "WeaponChamsColor"
+
+			for _, part in model:GetDescendants() do
+				if not part:IsA("BasePart") then continue end
+
+				if not VMOriginals[part] then
+					VMOriginals[part] = { Material = part.Material, Color = part.Color }
+				end
+
+				if Toggles[toggle].Value then
+					part.Material = Enum.Material.ForceField
+					part.Color = Options[colorOpt].Value
+				else
+					part.Material = VMOriginals[part].Material
+					part.Color = VMOriginals[part].Color
+				end
+			end
+		end
+	end
+
+	-- Render Loop
+
+	RunService.RenderStepped:Connect(function()
+		UpdateMoveCache()
+		UpdateChams()
+		UpdateViewmodelChams()
+		UpdateWorld()
+
+		local mouse = UserInputService:GetMouseLocation()
+		local fovRadius = GetScaledFOVRadius()
+		FOVCircle.Visible = Toggles.ShowFOV.Value
+		FOVCircle.Radius = fovRadius
+		FOVCircle.Color = Options.FOVColor.Value
+		FOVCircle.Position = mouse
+		FOVOutline.Visible = Toggles.ShowFOV.Value
+		FOVOutline.Radius = fovRadius
+		FOVOutline.Position = mouse
+
+		PredictedScreenPos = nil
+
+		if Toggles.Aimbot.Value and Options.AimbotMode.Value == "Memory" and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+			local targetPos, targetPart, targetPlayer = GetClosestTarget()
+			if targetPart and targetPos then
+				local camera = GetCamera()
+				local aimPos = targetPos
+
+				if Toggles.Prediction.Value and targetPlayer then
+					local wData = GetWeaponBulletData()
+					local bulletSpeed = wData and wData["bulletspeed"] or 2000
+					local accel = wData and wData["bulletacceleration"] or GRAVITY
+					local vel, t = PredictTrajectory(camera.CFrame.Position, accel, targetPos, bulletSpeed, GetTargetVelocity(targetPlayer))
+					if t then
+						aimPos = targetPos + GetTargetVelocity(targetPlayer) * t
+						local predScreen = camera:WorldToViewportPoint(aimPos)
+						PredictedScreenPos = Vector2.new(predScreen.X, predScreen.Y)
+					end
+				end
+
+				local screenPos = camera:WorldToViewportPoint(aimPos)
+				local center = camera.ViewportSize / 2
+				local deltaX = (screenPos.X - center.X) / Options.Smoothing.Value
+				local deltaY = (screenPos.Y - center.Y) / Options.Smoothing.Value
+				mousemoverel(deltaX, deltaY)
+			end
+		elseif Toggles.Aimbot.Value and Toggles.Prediction.Value and Toggles.PredictionDot.Value then
+			local targetPos, _, targetPlayer = GetClosestTarget()
+			if targetPos and targetPlayer then
+				local camera = GetCamera()
+				local wData = GetWeaponBulletData()
+				local bulletSpeed = wData and wData["bulletspeed"] or 2000
+				local accel = wData and wData["bulletacceleration"] or GRAVITY
+				local _, t = PredictTrajectory(camera.CFrame.Position, accel, targetPos, bulletSpeed, GetTargetVelocity(targetPlayer))
+				if t then
+					local predWorld = targetPos + GetTargetVelocity(targetPlayer) * t
+					local predScreen = camera:WorldToViewportPoint(predWorld)
+					PredictedScreenPos = Vector2.new(predScreen.X, predScreen.Y)
+				end
+			end
+		end
+
+		local showDot = Toggles.PredictionDot.Value and Toggles.Prediction.Value and PredictedScreenPos ~= nil
+		PredDot.Visible = showDot
+		PredDotOutline.Visible = showDot
+		if showDot then
+			PredDot.Position = PredictedScreenPos
+			PredDot.Color = Options.PredictionDotColor.Value
+			PredDotOutline.Position = PredictedScreenPos
+		end
+
+		if Toggles.NoSpread.Value or Toggles.SmallCrosshair.Value or Toggles.NoCrosshair.Value then
+			ApplyWeaponMods()
+		end
+	end)
+else
+	setfflag("DebugRunParallelLuaOnMainThread", "True")
+	game:GetService("TeleportService"):Teleport(game.PlaceId, game.Players.LocalPlayer)
+end
